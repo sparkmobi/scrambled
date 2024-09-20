@@ -53,7 +53,7 @@ def preprocess_audio(input_file, output_file):
         logger.error(f"Error preprocessing audio: {e.stderr.decode()}")
         raise
 
-def split_audio(audio_file, max_duration=30):
+def split_audio(audio_file, max_duration=30*60):
     """Split audio into chunks of max_duration seconds."""
     audio = AudioSegment.from_mp3(audio_file)
     chunks = []
