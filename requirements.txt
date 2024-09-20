@@ -73,3 +73,4 @@ websockets
 yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz
 zopfli==0.2.3
 pydub
+ffmpeg-python
