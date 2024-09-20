@@ -40,6 +40,8 @@ def split_audio(audio_file, max_duration=30):
         chunks.append(chunk)
     return chunks
 
+import json
+
 def transcribe_chunk(chunk, chunk_number):
     try:
         temp_file_path = os.path.join(SCRIPT_DIR, f"temp_chunk_{chunk_number}.wav")
@@ -57,14 +59,24 @@ def transcribe_chunk(chunk, chunk_number):
         os.remove(temp_file_path)
         logger.info(f"Chunk {chunk_number} processed successfully")
         
-        # Check if the response is a string (as expected with response_format="text")
+        # Log the type and content of the response
+        logger.info(f"Response type: {type(response)}")
+        logger.info(f"Response content: {response}")
+        
+        # Handle different response types
         if isinstance(response, str):
             return response.strip()
+        elif isinstance(response, dict):
+            return response.get('text', '').strip()
+        elif hasattr(response, 'text'):
+            return response.text.strip()
         else:
-            # If it's not a string, it might be an object with a 'text' attribute
-            return response.text.strip() if hasattr(response, 'text') else str(response)
+            # If we can't handle the response type, convert it to a string
+            return str(response).strip()
     except Exception as e:
         logger.error(f"Error in transcribe_chunk {chunk_number}: {str(e)}")
+        logger.error(f"Exception type: {type(e)}")
+        logger.error(f"Exception args: {e.args}")
         raise
 
 def process_audio(file_path):
@@ -83,6 +95,8 @@ def process_audio(file_path):
                 st.progress(progress)
             except Exception as e:
                 logger.error(f"Error processing chunk {i+1}: {str(e)}")
+                logger.error(f"Exception type: {type(e)}")
+                logger.error(f"Exception args: {e.args}")
                 transcripts.append(str(e))
 
         errors = [t for t in transcripts if isinstance(t, str) and "Error" in t]
@@ -98,6 +112,8 @@ def process_audio(file_path):
 
     except Exception as e:
         logger.error(f"Error in process_audio: {str(e)}")
+        logger.error(f"Exception type: {type(e)}")
+        logger.error(f"Exception args: {e.args}")
         raise
 
 def download_file(url):
