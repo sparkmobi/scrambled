@@ -7,6 +7,7 @@ from pydub import AudioSegment
 from dotenv import load_dotenv
 import logging
 from groq import Groq
+import ffmpeg
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -31,16 +32,30 @@ MAX_CHUNK_SIZE = 10 * 1024 * 1024
 # Get the current script directory
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+def preprocess_audio(input_file, output_file):
+    """Preprocess audio file to 16kHz mono WAV."""
+    try:
+        (
+            ffmpeg
+            .input(input_file)
+            .output(output_file, acodec='pcm_s16le', ac=1, ar='16k')
+            .overwrite_output()
+            .run(capture_stdout=True, capture_stderr=True)
+        )
+        logger.info(f"Preprocessed audio file: {output_file}")
+        return output_file
+    except ffmpeg.Error as e:
+        logger.error(f"Error preprocessing audio: {e.stderr.decode()}")
+        raise
+
 def split_audio(audio_file, max_duration=30):
     """Split audio into chunks of max_duration seconds."""
-    audio = AudioSegment.from_file(audio_file)
+    audio = AudioSegment.from_file(audio_file, format="wav")
     chunks = []
     for i in range(0, len(audio), max_duration * 1000):
         chunk = audio[i:i + max_duration * 1000]
         chunks.append(chunk)
     return chunks
-
-import json
 
 def transcribe_chunk(chunk, chunk_number):
     try:
@@ -59,52 +74,40 @@ def transcribe_chunk(chunk, chunk_number):
         os.remove(temp_file_path)
         logger.info(f"Chunk {chunk_number} processed successfully")
         
-        # Log the type and content of the response
-        logger.info(f"Response type: {type(response)}")
-        logger.info(f"Response content: {response}")
-        
-        # Handle different response types
-        if isinstance(response, str):
-            return response.strip()
-        elif isinstance(response, dict):
-            return response.get('text', '').strip()
-        elif hasattr(response, 'text'):
-            return response.text.strip()
-        else:
-            # If we can't handle the response type, convert it to a string
-            return str(response).strip()
+        return str(response).strip()
     except Exception as e:
         logger.error(f"Error in transcribe_chunk {chunk_number}: {str(e)}")
-        logger.error(f"Exception type: {type(e)}")
-        logger.error(f"Exception args: {e.args}")
         raise
 
 def process_audio(file_path):
     try:
-        chunks = split_audio(file_path)
+        # Preprocess the audio file
+        preprocessed_file = os.path.join(SCRIPT_DIR, "preprocessed_audio.wav")
+        preprocess_audio(file_path, preprocessed_file)
+        
+        chunks = split_audio(preprocessed_file)
         logger.info(f"Audio split into {len(chunks)} chunks")
 
         transcripts = []
         for i, chunk in enumerate(chunks):
             try:
                 transcript = transcribe_chunk(chunk, i+1)
-                logger.info(f"Transcript for chunk {i+1}: {transcript[:50]}...")  # Log the first 50 characters
+                logger.info(f"Transcript for chunk {i+1}: {transcript[:50]}...")
                 transcripts.append(transcript)
-                # Add a progress bar
                 progress = (i + 1) / len(chunks)
                 st.progress(progress)
             except Exception as e:
                 logger.error(f"Error processing chunk {i+1}: {str(e)}")
-                logger.error(f"Exception type: {type(e)}")
-                logger.error(f"Exception args: {e.args}")
                 transcripts.append(str(e))
 
-        errors = [t for t in transcripts if isinstance(t, str) and "Error" in t]
+        os.remove(preprocessed_file)  # Clean up the preprocessed file
+
+        errors = [t for t in transcripts if "Error" in t]
         if errors:
             error_msgs = "\n".join(errors)
             raise Exception(f"Errors occurred during transcription:\n{error_msgs}")
 
-        full_transcript = " ".join(t for t in transcripts if not isinstance(t, str) or "Error" not in t)
+        full_transcript = " ".join(transcripts)
         logger.info("All chunks processed and combined")
         logger.info(f"Full transcript (first 100 characters): {full_transcript[:100]}...")
 
@@ -112,8 +115,6 @@ def process_audio(file_path):
 
     except Exception as e:
         logger.error(f"Error in process_audio: {str(e)}")
-        logger.error(f"Exception type: {type(e)}")
-        logger.error(f"Exception args: {e.args}")
         raise
 
 def download_file(url):
