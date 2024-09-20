@@ -46,7 +46,7 @@ def transcribe_chunk(chunk, chunk_number):
         chunk.export(temp_file_path, format="wav")
         
         with open(temp_file_path, "rb") as audio_file:
-            transcription = st.session_state.client.audio.transcriptions.create(
+            response = st.session_state.client.audio.transcriptions.create(
                 file=audio_file,
                 model="whisper-large-v3",
                 prompt="",
@@ -56,7 +56,13 @@ def transcribe_chunk(chunk, chunk_number):
         
         os.remove(temp_file_path)
         logger.info(f"Chunk {chunk_number} processed successfully")
-        return transcription.strip()
+        
+        # Check if the response is a string (as expected with response_format="text")
+        if isinstance(response, str):
+            return response.strip()
+        else:
+            # If it's not a string, it might be an object with a 'text' attribute
+            return response.text.strip() if hasattr(response, 'text') else str(response)
     except Exception as e:
         logger.error(f"Error in transcribe_chunk {chunk_number}: {str(e)}")
         raise
@@ -70,6 +76,7 @@ def process_audio(file_path):
         for i, chunk in enumerate(chunks):
             try:
                 transcript = transcribe_chunk(chunk, i+1)
+                logger.info(f"Transcript for chunk {i+1}: {transcript[:50]}...")  # Log the first 50 characters
                 transcripts.append(transcript)
                 # Add a progress bar
                 progress = (i + 1) / len(chunks)
@@ -85,6 +92,7 @@ def process_audio(file_path):
 
         full_transcript = " ".join(t for t in transcripts if not isinstance(t, str) or "Error" not in t)
         logger.info("All chunks processed and combined")
+        logger.info(f"Full transcript (first 100 characters): {full_transcript[:100]}...")
 
         return full_transcript
 
