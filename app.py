@@ -31,26 +31,14 @@ MAX_CHUNK_SIZE = 10 * 1024 * 1024
 # Get the current script directory
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-def split_audio(audio_file, file_size):
-    try:
-        if file_size <= MAX_CHUNK_SIZE:
-            return [AudioSegment.from_file(audio_file)]
-        
-        num_chunks = math.ceil(file_size / MAX_CHUNK_SIZE)
-        audio = AudioSegment.from_file(audio_file)
-        chunk_duration = len(audio) // num_chunks
-        
-        chunks = []
-        for i in range(num_chunks):
-            start = i * chunk_duration
-            end = (i + 1) * chunk_duration if i < num_chunks - 1 else len(audio)
-            chunks.append(audio[start:end])
-        
-        return chunks
-    except FileNotFoundError:
-        logger.error("FFmpeg (ffprobe) not found. Please install FFmpeg and add it to your PATH.")
-        st.error("FFmpeg is not installed. Please contact the administrator.")
-        return None
+def split_audio(audio_file, max_duration=30):
+    """Split audio into chunks of max_duration seconds."""
+    audio = AudioSegment.from_file(audio_file)
+    chunks = []
+    for i in range(0, len(audio), max_duration * 1000):
+        chunk = audio[i:i + max_duration * 1000]
+        chunks.append(chunk)
+    return chunks
 
 def transcribe_chunk(chunk, chunk_number):
     try:
@@ -62,25 +50,20 @@ def transcribe_chunk(chunk, chunk_number):
                 file=audio_file,
                 model="whisper-large-v3",
                 prompt="",
-				temperature=0.0,
-				response_format="json"
+                temperature=0.0,
+                response_format="text"
             )
         
         os.remove(temp_file_path)
         logger.info(f"Chunk {chunk_number} processed successfully")
-        return transcription.text.strip()
+        return transcription.strip()
     except Exception as e:
         logger.error(f"Error in transcribe_chunk {chunk_number}: {str(e)}")
         raise
 
 def process_audio(file_path):
     try:
-        file_size = os.path.getsize(file_path)
-        logger.info(f"File size: {file_size} bytes")
-
-        chunks = split_audio(file_path, file_size)
-        if chunks is None:
-            return None
+        chunks = split_audio(file_path)
         logger.info(f"Audio split into {len(chunks)} chunks")
 
         transcripts = []
@@ -88,16 +71,19 @@ def process_audio(file_path):
             try:
                 transcript = transcribe_chunk(chunk, i+1)
                 transcripts.append(transcript)
+                # Add a progress bar
+                progress = (i + 1) / len(chunks)
+                st.progress(progress)
             except Exception as e:
                 logger.error(f"Error processing chunk {i+1}: {str(e)}")
                 transcripts.append(str(e))
 
-        errors = [t for t in transcripts if "Error" in t]
+        errors = [t for t in transcripts if isinstance(t, str) and "Error" in t]
         if errors:
             error_msgs = "\n".join(errors)
             raise Exception(f"Errors occurred during transcription:\n{error_msgs}")
 
-        full_transcript = " ".join(t for t in transcripts if "Error" not in t)
+        full_transcript = " ".join(t for t in transcripts if not isinstance(t, str) or "Error" not in t)
         logger.info("All chunks processed and combined")
 
         return full_transcript
@@ -128,8 +114,9 @@ if input_method == "URL":
                 if file_path:
                     try:
                         transcription = process_audio(file_path)
-                        st.success("Transcription complete!")
-                        st.text_area("Transcription:", value=transcription, height=300)
+                        if transcription:
+                            st.success("Transcription complete!")
+                            st.text_area("Transcription:", value=transcription, height=300)
                     except Exception as e:
                         st.error(f"An error occurred during transcription: {str(e)}")
                     finally:
@@ -146,8 +133,9 @@ else:
                     temp_file.write(uploaded_file.getvalue())
                 try:
                     transcription = process_audio(temp_file_path)
-                    st.success("Transcription complete!")
-                    st.text_area("Transcription:", value=transcription, height=300)
+                    if transcription:
+                        st.success("Transcription complete!")
+                        st.text_area("Transcription:", value=transcription, height=300)
                 except Exception as e:
                     st.error(f"An error occurred during transcription: {str(e)}")
                 finally:
