@@ -65,11 +65,6 @@ def split_audio(audio_file, max_duration=30):
 def transcribe_chunk(chunk, chunk_number):
     try:
         temp_file_path = os.path.join(SCRIPT_DIR, f"temp_chunk_{chunk_number}.mp3")
-        chunk.export(temp_file_path, format="mp3", bitrate="32k")
-        
-        # Log the size of the chunk
-        chunk_size = os.path.getsize(temp_file_path)
-        logger.info(f"Chunk {chunk_number} size: {chunk_size / 1024:.2f} KB")
         
         with open(temp_file_path, "rb") as audio_file:
             response = st.session_state.client.audio.transcriptions.create(
@@ -80,7 +75,6 @@ def transcribe_chunk(chunk, chunk_number):
                 response_format="text"
             )
         
-        os.remove(temp_file_path)
         logger.info(f"Chunk {chunk_number} processed successfully")
         
         return str(response).strip()
@@ -102,24 +96,33 @@ def process_audio(file_path):
         logger.info(f"Audio split into {len(chunks)} chunks")
 
         transcripts = []
-        total_chunk_size = 0
+        temp_files = []
         for i, chunk in enumerate(chunks):
             try:
+                temp_file_path = os.path.join(SCRIPT_DIR, f"temp_chunk_{i+1}.mp3")
+                chunk.export(temp_file_path, format="mp3", bitrate="32k")
+                temp_files.append(temp_file_path)
+                
+                chunk_size = os.path.getsize(temp_file_path)
+                logger.info(f"Chunk {i+1} size: {chunk_size / 1024:.2f} KB")
+                
                 transcript = transcribe_chunk(chunk, i+1)
                 logger.info(f"Transcript for chunk {i+1}: {transcript[:50]}...")
                 transcripts.append(transcript)
                 progress = (i + 1) / len(chunks)
                 st.progress(progress)
-                
-                # Add chunk size to total
-                chunk_size = os.path.getsize(os.path.join(SCRIPT_DIR, f"temp_chunk_{i+1}.mp3"))
-                total_chunk_size += chunk_size
             except Exception as e:
                 logger.error(f"Error processing chunk {i+1}: {str(e)}")
                 transcripts.append(str(e))
 
+        # Calculate total size of all chunks
+        total_chunk_size = sum(os.path.getsize(f) for f in temp_files)
         logger.info(f"Total size of all chunks: {total_chunk_size / (1024 * 1024):.2f} MB")
-        os.remove(preprocessed_file)  # Clean up the preprocessed file
+
+        # Clean up temporary files
+        for temp_file in temp_files:
+            os.remove(temp_file)
+        os.remove(preprocessed_file)
 
         errors = [t for t in transcripts if "Error" in t]
         if errors:
