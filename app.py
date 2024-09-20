@@ -42,7 +42,12 @@ def preprocess_audio(input_file, output_file):
             .overwrite_output()
             .run(capture_stdout=True, capture_stderr=True)
         )
+        
+        # Get and log the size of the preprocessed file
+        preprocessed_size = os.path.getsize(output_file)
         logger.info(f"Preprocessed audio file: {output_file}")
+        logger.info(f"Preprocessed file size: {preprocessed_size / (1024 * 1024):.2f} MB")
+        
         return output_file
     except ffmpeg.Error as e:
         logger.error(f"Error preprocessing audio: {e.stderr.decode()}")
@@ -81,6 +86,10 @@ def transcribe_chunk(chunk, chunk_number):
 
 def process_audio(file_path):
     try:
+        # Log the size of the input file
+        input_size = os.path.getsize(file_path)
+        logger.info(f"Input file size: {input_size / (1024 * 1024):.2f} MB")
+
         # Preprocess the audio file
         preprocessed_file = os.path.join(SCRIPT_DIR, "preprocessed_audio.mp3")
         preprocess_audio(file_path, preprocessed_file)
