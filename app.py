@@ -33,12 +33,12 @@ MAX_CHUNK_SIZE = 10 * 1024 * 1024
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def preprocess_audio(input_file, output_file):
-    """Preprocess audio file to 16kHz mono WAV."""
+    """Preprocess audio file to 16kHz mono MP3."""
     try:
         (
             ffmpeg
             .input(input_file)
-            .output(output_file, acodec='pcm_s16le', ac=1, ar='16k')
+            .output(output_file, acodec='libmp3lame', ac=1, ar='16k', b='32k')
             .overwrite_output()
             .run(capture_stdout=True, capture_stderr=True)
         )
@@ -50,7 +50,7 @@ def preprocess_audio(input_file, output_file):
 
 def split_audio(audio_file, max_duration=30):
     """Split audio into chunks of max_duration seconds."""
-    audio = AudioSegment.from_file(audio_file, format="wav")
+    audio = AudioSegment.from_mp3(audio_file)
     chunks = []
     for i in range(0, len(audio), max_duration * 1000):
         chunk = audio[i:i + max_duration * 1000]
@@ -59,8 +59,8 @@ def split_audio(audio_file, max_duration=30):
 
 def transcribe_chunk(chunk, chunk_number):
     try:
-        temp_file_path = os.path.join(SCRIPT_DIR, f"temp_chunk_{chunk_number}.wav")
-        chunk.export(temp_file_path, format="wav")
+        temp_file_path = os.path.join(SCRIPT_DIR, f"temp_chunk_{chunk_number}.mp3")
+        chunk.export(temp_file_path, format="mp3", bitrate="32k")
         
         with open(temp_file_path, "rb") as audio_file:
             response = st.session_state.client.audio.transcriptions.create(
@@ -82,7 +82,7 @@ def transcribe_chunk(chunk, chunk_number):
 def process_audio(file_path):
     try:
         # Preprocess the audio file
-        preprocessed_file = os.path.join(SCRIPT_DIR, "preprocessed_audio.wav")
+        preprocessed_file = os.path.join(SCRIPT_DIR, "preprocessed_audio.mp3")
         preprocess_audio(file_path, preprocessed_file)
         
         chunks = split_audio(preprocessed_file)
@@ -153,7 +153,7 @@ else:
     if uploaded_file:
         if st.button("Transcribe"):
             with st.spinner("Transcribing..."):
-                temp_file_path = os.path.join(SCRIPT_DIR, f"temp_upload.{uploaded_file.name.split('.')[-1]}")
+                temp_file_path = os.path.join(SCRIPT_DIR, f"temp_upload.mp3")
                 with open(temp_file_path, "wb") as temp_file:
                     temp_file.write(uploaded_file.getvalue())
                 try:
@@ -166,4 +166,4 @@ else:
                 finally:
                     os.remove(temp_file_path)
 
-st.markdown("Note: This app supports audio files up to 25 MB in size.")
+st.markdown("Note: This app supports audio files up to 25 MB in size. Files will be compressed to reduce size if necessary.")
