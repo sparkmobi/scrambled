@@ -32,20 +32,25 @@ MAX_CHUNK_SIZE = 10 * 1024 * 1024
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def split_audio(audio_file, file_size):
-    if file_size <= MAX_CHUNK_SIZE:
-        return [AudioSegment.from_file(audio_file)]
-    
-    num_chunks = math.ceil(file_size / MAX_CHUNK_SIZE)
-    audio = AudioSegment.from_file(audio_file)
-    chunk_duration = len(audio) // num_chunks
-    
-    chunks = []
-    for i in range(num_chunks):
-        start = i * chunk_duration
-        end = (i + 1) * chunk_duration if i < num_chunks - 1 else len(audio)
-        chunks.append(audio[start:end])
-    
-    return chunks
+    try:
+        if file_size <= MAX_CHUNK_SIZE:
+            return [AudioSegment.from_file(audio_file)]
+        
+        num_chunks = math.ceil(file_size / MAX_CHUNK_SIZE)
+        audio = AudioSegment.from_file(audio_file)
+        chunk_duration = len(audio) // num_chunks
+        
+        chunks = []
+        for i in range(num_chunks):
+            start = i * chunk_duration
+            end = (i + 1) * chunk_duration if i < num_chunks - 1 else len(audio)
+            chunks.append(audio[start:end])
+        
+        return chunks
+    except FileNotFoundError:
+        logger.error("FFmpeg (ffprobe) not found. Please install FFmpeg and add it to your PATH.")
+        st.error("FFmpeg is not installed. Please contact the administrator.")
+        return None
 
 def transcribe_chunk(chunk, chunk_number):
     try:
@@ -74,6 +79,8 @@ def process_audio(file_path):
         logger.info(f"File size: {file_size} bytes")
 
         chunks = split_audio(file_path, file_size)
+        if chunks is None:
+            return None
         logger.info(f"Audio split into {len(chunks)} chunks")
 
         transcripts = []
