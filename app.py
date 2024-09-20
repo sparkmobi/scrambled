@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Get Groq API key from environment variable
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+GROQ_API_KEY = "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"
 
 if not GROQ_API_KEY:
     st.error("GROQ_API_KEY is not set in the environment variables")
