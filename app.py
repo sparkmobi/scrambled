@@ -2,13 +2,12 @@ import os
 import math
 import streamlit as st
 import requests
-import tempfile
 from pydub import AudioSegment
 from dotenv import load_dotenv
 import logging
 from groq import Groq
 import ffmpeg
-from api_key_manager import get_available_key, reset_minute_counts, reset_hour_audio, reset_day_counts
+from api_key_manager import get_available_key, reset_counters
 from datetime import datetime, timedelta
 import time
 
@@ -56,34 +55,39 @@ def split_audio(audio_file, max_duration=30*60):
     return chunks
 
 def transcribe_chunk(chunk, chunk_number, audio_duration):
-    try:
-        temp_file_path = os.path.join(SCRIPT_DIR, f"temp_chunk_{chunk_number}.mp3")
-        chunk.export(temp_file_path, format="mp3", bitrate="32k")
-        
-        # Get an available API key
-        api_key = get_available_key(audio_duration)
-        if api_key is None:
-            raise Exception("No available API keys")
-        
-        # Initialize Groq client with the new API key
-        client = Groq(api_key=api_key)
-        
-        with open(temp_file_path, "rb") as audio_file:
-            response = client.audio.transcriptions.create(
-                file=audio_file,
-                model="whisper-large-v3",
-                prompt="",
-                temperature=0.0,
-                response_format="text"
-            )
-        
-        os.remove(temp_file_path)
-        logger.info(f"Chunk {chunk_number} processed successfully")
-        
-        return str(response).strip()
-    except Exception as e:
-        logger.error(f"Error in transcribe_chunk {chunk_number}: {str(e)}")
-        raise
+    while True:
+        try:
+            temp_file_path = os.path.join(SCRIPT_DIR, f"temp_chunk_{chunk_number}.mp3")
+            chunk.export(temp_file_path, format="mp3", bitrate="32k")
+            
+            # Get an available API key
+            api_key = get_available_key(audio_duration)
+            if api_key is None:
+                raise Exception("No available API keys")
+            
+            # Initialize Groq client with the new API key
+            client = Groq(api_key=api_key)
+            
+            with open(temp_file_path, "rb") as audio_file:
+                response = client.audio.transcriptions.create(
+                    file=audio_file,
+                    model="whisper-large-v3",
+                    prompt="",
+                    temperature=0.0,
+                    response_format="text"
+                )
+            
+            os.remove(temp_file_path)
+            logger.info(f"Chunk {chunk_number} processed successfully")
+            
+            return str(response).strip()
+        except Exception as e:
+            logger.error(f"Error in transcribe_chunk {chunk_number}: {str(e)}")
+            if "rate limit" in str(e).lower():
+                logger.info(f"Rate limit reached for chunk {chunk_number}. Retrying with a different API key.")
+                time.sleep(1)  # Wait a bit before retrying
+                continue
+            raise
 
 def process_audio(file_path):
     try:
@@ -98,29 +102,10 @@ def process_audio(file_path):
         chunks = split_audio(preprocessed_file)
         logger.info(f"Audio split into {len(chunks)} chunks")
 
-        last_minute_reset = datetime.now()
-        last_hour_reset = datetime.now().replace(minute=0, second=0, microsecond=0)
-        last_day_reset = datetime.now().date()
-
         transcripts = []
         temp_files = []
         for i, chunk in enumerate(chunks):
             try:
-                # Check if we need to reset counts
-                now = datetime.now()
-                
-                if (now - last_minute_reset).total_seconds() >= 60:
-                    reset_minute_counts()
-                    last_minute_reset = now
-
-                if now.replace(minute=0, second=0, microsecond=0) > last_hour_reset:
-                    reset_hour_audio()
-                    last_hour_reset = now.replace(minute=0, second=0, microsecond=0)
-
-                if now.date() > last_day_reset:
-                    reset_day_counts()
-                    last_day_reset = now.date()
-
                 temp_file_path = os.path.join(SCRIPT_DIR, f"temp_chunk_{i+1}.mp3")
                 chunk.export(temp_file_path, format="mp3", bitrate="32k")
                 temp_files.append(temp_file_path)
@@ -141,7 +126,7 @@ def process_audio(file_path):
                 logger.error(f"Error processing chunk {i+1}: {str(e)}")
                 if hasattr(e, 'response') and hasattr(e.response, 'json'):
                     logger.error(f"API response: {e.response.json()}")
-                transcripts.append(f"Error in chunk {i+1}: {str(e)}")
+                raise  # Re-raise the exception to stop processing if a chunk fails
 
         # Calculate total size of all chunks
         total_chunk_size = sum(os.path.getsize(f) for f in temp_files if os.path.exists(f))
