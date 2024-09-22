@@ -25,6 +25,12 @@ def get_available_key(audio_duration):
     # Reset counters if necessary
     reset_counters()
     
+    # Log all API keys before filtering
+    all_keys = supabase.table("api_keys").select("*").execute()
+    logger.info(f"Total API keys: {len(all_keys.data)}")
+    for key in all_keys.data:
+        logger.info(f"Key ID: {key['id']}, hour_audio: {key['hour_audio']}, minute_count: {key['minute_count']}, day_count: {key['day_count']}, day_audio: {key['day_audio']}")
+    
     # Query for available keys
     query = supabase.table("api_keys").select("*")\
         .lt("minute_count", MINUTE_LIMIT)\
@@ -67,18 +73,18 @@ def reset_counters():
     
     # Reset minute counts
     minute_reset = supabase.table("api_keys").update({"minute_count": 0})\
-        .lt("last_used", (now - timedelta(minutes=1)).isoformat())\
+        .lt("last_used", (now - timedelta(seconds=30)).isoformat())\
         .execute()
     logger.info(f"Minute count reset for {len(minute_reset.data)} keys")
     
     # Reset hour audio
     hour_reset = supabase.table("api_keys").update({"hour_audio": 0})\
-        .lt("last_used", (now - timedelta(hours=1)).isoformat())\
+        .lt("last_used", (now - timedelta(minutes=30)).isoformat())\
         .execute()
     logger.info(f"Hour audio reset for {len(hour_reset.data)} keys")
     
     # Reset day counts and audio
     day_reset = supabase.table("api_keys").update({"day_count": 0, "day_audio": 0})\
-        .lt("last_used", (now - timedelta(days=1)).isoformat())\
+        .lt("last_used", (now - timedelta(hours=12)).isoformat())\
         .execute()
     logger.info(f"Day count and audio reset for {len(day_reset.data)} keys")
