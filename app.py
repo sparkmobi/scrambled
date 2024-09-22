@@ -139,7 +139,9 @@ def process_audio(file_path):
                 time.sleep(1)
             except Exception as e:
                 logger.error(f"Error processing chunk {i+1}: {str(e)}")
-                transcripts.append(str(e))
+                if hasattr(e, 'response') and hasattr(e.response, 'json'):
+                    logger.error(f"API response: {e.response.json()}")
+                transcripts.append(f"Error in chunk {i+1}: {str(e)}")
 
         # Calculate total size of all chunks
         total_chunk_size = sum(os.path.getsize(f) for f in temp_files if os.path.exists(f))
@@ -152,12 +154,12 @@ def process_audio(file_path):
         if os.path.exists(preprocessed_file):
             os.remove(preprocessed_file)
 
-        errors = [t for t in transcripts if isinstance(t, str) and "Error" in t]
+        errors = [t for t in transcripts if t.startswith("Error in chunk")]
         if errors:
             error_msgs = "\n".join(errors)
             raise Exception(f"Errors occurred during transcription:\n{error_msgs}")
 
-        full_transcript = " ".join(t for t in transcripts if not isinstance(t, str) or "Error" not in t)
+        full_transcript = " ".join(t for t in transcripts if not t.startswith("Error in chunk"))
         logger.info("All chunks processed and combined")
         logger.info(f"Full transcript (first 100 characters): {full_transcript[:100]}...")
 
