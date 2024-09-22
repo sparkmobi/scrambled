@@ -64,7 +64,10 @@ def transcribe_chunk(chunk, chunk_number, audio_duration):
             logger.info(f"Requesting API key for chunk {chunk_number} with duration {audio_duration} seconds")
             api_key = get_available_key(audio_duration)
             if api_key is None:
+                logger.error(f"No available API keys for chunk {chunk_number}")
                 raise Exception("No available API keys")
+            
+            logger.info(f"Retrieved API key for chunk {chunk_number}")
             
             # Initialize Groq client with the new API key
             client = Groq(api_key=api_key)
