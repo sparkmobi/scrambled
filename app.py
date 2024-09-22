@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 import logging
 from groq import Groq
 import ffmpeg
+from api_key_manager import get_available_key, reset_minute_counts, reset_hour_audio, reset_day_counts
+from datetime import datetime, timedelta
+import time
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -17,7 +20,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Get Groq API key from environment variable
-GROQ_API_KEY = "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"
+GROQ_API_KEY = None
 
 if not GROQ_API_KEY:
     st.error("GROQ_API_KEY is not set in the environment variables")
@@ -62,12 +65,21 @@ def split_audio(audio_file, max_duration=30*60):
         chunks.append(chunk)
     return chunks
 
-def transcribe_chunk(chunk, chunk_number):
+def transcribe_chunk(chunk, chunk_number, audio_duration):
     try:
         temp_file_path = os.path.join(SCRIPT_DIR, f"temp_chunk_{chunk_number}.mp3")
+        chunk.export(temp_file_path, format="mp3", bitrate="32k")
+        
+        # Get an available API key
+        api_key = get_available_key(audio_duration)
+        if api_key is None:
+            raise Exception("No available API keys")
+        
+        # Initialize Groq client with the new API key
+        client = Groq(api_key=api_key)
         
         with open(temp_file_path, "rb") as audio_file:
-            response = st.session_state.client.audio.transcriptions.create(
+            response = client.audio.transcriptions.create(
                 file=audio_file,
                 model="whisper-large-v3",
                 prompt="",
@@ -75,6 +87,7 @@ def transcribe_chunk(chunk, chunk_number):
                 response_format="text"
             )
         
+        os.remove(temp_file_path)
         logger.info(f"Chunk {chunk_number} processed successfully")
         
         return str(response).strip()
@@ -95,10 +108,29 @@ def process_audio(file_path):
         chunks = split_audio(preprocessed_file)
         logger.info(f"Audio split into {len(chunks)} chunks")
 
+        last_minute_reset = datetime.now()
+        last_hour_reset = datetime.now().replace(minute=0, second=0, microsecond=0)
+        last_day_reset = datetime.now().date()
+
         transcripts = []
         temp_files = []
         for i, chunk in enumerate(chunks):
             try:
+                # Check if we need to reset counts
+                now = datetime.now()
+                
+                if (now - last_minute_reset).total_seconds() >= 60:
+                    reset_minute_counts()
+                    last_minute_reset = now
+
+                if now.replace(minute=0, second=0, microsecond=0) > last_hour_reset:
+                    reset_hour_audio()
+                    last_hour_reset = now.replace(minute=0, second=0, microsecond=0)
+
+                if now.date() > last_day_reset:
+                    reset_day_counts()
+                    last_day_reset = now.date()
+
                 temp_file_path = os.path.join(SCRIPT_DIR, f"temp_chunk_{i+1}.mp3")
                 chunk.export(temp_file_path, format="mp3", bitrate="32k")
                 temp_files.append(temp_file_path)
@@ -106,11 +138,15 @@ def process_audio(file_path):
                 chunk_size = os.path.getsize(temp_file_path)
                 logger.info(f"Chunk {i+1} size: {chunk_size / 1024:.2f} KB")
                 
-                transcript = transcribe_chunk(chunk, i+1)
+                audio_duration = len(chunk) / 1000  # Convert milliseconds to seconds
+                transcript = transcribe_chunk(chunk, i+1, audio_duration)
                 logger.info(f"Transcript for chunk {i+1}: {transcript[:50]}...")
                 transcripts.append(transcript)
                 progress = (i + 1) / len(chunks)
                 st.progress(progress)
+
+                # Add a delay between requests to avoid overwhelming the API
+                time.sleep(1)
             except Exception as e:
                 logger.error(f"Error processing chunk {i+1}: {str(e)}")
                 transcripts.append(str(e))
