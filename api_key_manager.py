@@ -26,17 +26,20 @@ def get_available_key(audio_duration):
     reset_counters()
     
     # Query for available keys
-    response = supabase.table("api_keys").select("*")\
+    query = supabase.table("api_keys").select("*")\
         .lt("minute_count", MINUTE_LIMIT)\
         .lt("day_count", DAY_LIMIT)\
         .lt("hour_audio", HOUR_AUDIO_LIMIT - audio_duration)\
         .lt("day_audio", DAY_AUDIO_LIMIT - audio_duration)\
-        .order("hour_audio")\
-        .execute()
+        .order("hour_audio")
+    
+    logger.info(f"Query: {query.query()}")
+    
+    response = query.execute()
     
     logger.info(f"Available keys: {len(response.data)}")
     for key in response.data:
-        logger.info(f"Key ID: {key['id']}, hour_audio: {key['hour_audio']}")
+        logger.info(f"Key ID: {key['id']}, hour_audio: {key['hour_audio']}, minute_count: {key['minute_count']}, day_count: {key['day_count']}, day_audio: {key['day_audio']}")
     
     if len(response.data) == 0:
         logger.warning("No available API keys")
@@ -61,16 +64,19 @@ def reset_counters():
     now = datetime.now()
     
     # Reset minute counts
-    supabase.table("api_keys").update({"minute_count": 0})\
+    minute_reset = supabase.table("api_keys").update({"minute_count": 0})\
         .lt("last_used", (now - timedelta(minutes=1)).isoformat())\
         .execute()
+    logger.info(f"Minute count reset for {len(minute_reset.data)} keys")
     
     # Reset hour audio
-    supabase.table("api_keys").update({"hour_audio": 0})\
+    hour_reset = supabase.table("api_keys").update({"hour_audio": 0})\
         .lt("last_used", (now - timedelta(hours=1)).isoformat())\
         .execute()
+    logger.info(f"Hour audio reset for {len(hour_reset.data)} keys")
     
     # Reset day counts and audio
-    supabase.table("api_keys").update({"day_count": 0, "day_audio": 0})\
+    day_reset = supabase.table("api_keys").update({"day_count": 0, "day_audio": 0})\
         .lt("last_used", (now - timedelta(days=1)).isoformat())\
         .execute()
+    logger.info(f"Day count and audio reset for {len(day_reset.data)} keys")
