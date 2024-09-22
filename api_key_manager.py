@@ -43,13 +43,13 @@ def get_available_key(audio_duration):
     return key["api_key"]
 
 def reset_minute_counts():
-    supabase.table("api_keys").update({"minute_count": 0}).execute()
+    supabase.table("api_keys").update({"minute_count": 0}).neq("id", "").execute()
 
 def reset_hour_audio():
-    supabase.table("api_keys").update({"hour_audio": 0}).execute()
+    supabase.table("api_keys").update({"hour_audio": 0}).neq("id", "").execute()
 
 def reset_day_counts():
     supabase.table("api_keys").update({
         "day_count": 0,
         "day_audio": 0
-    }).execute()
+    }).neq("id", "").execute()
