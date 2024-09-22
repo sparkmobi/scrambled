@@ -2,6 +2,7 @@ import os
 from supabase import create_client, Client
 from datetime import datetime, timedelta
 import time
+import logging
 
 # Initialize Supabase client
 url: str = "https://deqoekrxwvziwmclcthu.supabase.co"
@@ -14,26 +15,36 @@ DAY_LIMIT = 2000
 HOUR_AUDIO_LIMIT = 7200  # seconds
 DAY_AUDIO_LIMIT = 28800  # seconds
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 def get_available_key(audio_duration):
     now = datetime.now()
     
     # Reset counters if necessary
     reset_counters()
     
-    # Query for an available key
+    # Query for available keys
     response = supabase.table("api_keys").select("*")\
         .lt("minute_count", MINUTE_LIMIT)\
         .lt("day_count", DAY_LIMIT)\
         .lt("hour_audio", HOUR_AUDIO_LIMIT - audio_duration)\
         .lt("day_audio", DAY_AUDIO_LIMIT - audio_duration)\
-        .order("last_used")\
+        .order("hour_audio")\
         .execute()
     
+    logger.info(f"Available keys: {len(response.data)}")
+    for key in response.data:
+        logger.info(f"Key ID: {key['id']}, hour_audio: {key['hour_audio']}")
+    
     if len(response.data) == 0:
+        logger.warning("No available API keys")
         return None
     
-    # Get the first available key
+    # Get the first available key (with lowest hour_audio usage)
     key = response.data[0]
+    logger.info(f"Selected key ID: {key['id']}, hour_audio: {key['hour_audio']}")
     
     # Update the usage counts
     supabase.table("api_keys").update({
