@@ -142,20 +142,22 @@ def process_audio(file_path):
                 transcripts.append(str(e))
 
         # Calculate total size of all chunks
-        total_chunk_size = sum(os.path.getsize(f) for f in temp_files)
+        total_chunk_size = sum(os.path.getsize(f) for f in temp_files if os.path.exists(f))
         logger.info(f"Total size of all chunks: {total_chunk_size / (1024 * 1024):.2f} MB")
 
         # Clean up temporary files
         for temp_file in temp_files:
-            os.remove(temp_file)
-        os.remove(preprocessed_file)
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+        if os.path.exists(preprocessed_file):
+            os.remove(preprocessed_file)
 
-        errors = [t for t in transcripts if "Error" in t]
+        errors = [t for t in transcripts if isinstance(t, str) and "Error" in t]
         if errors:
             error_msgs = "\n".join(errors)
             raise Exception(f"Errors occurred during transcription:\n{error_msgs}")
 
-        full_transcript = " ".join(transcripts)
+        full_transcript = " ".join(t for t in transcripts if not isinstance(t, str) or "Error" not in t)
         logger.info("All chunks processed and combined")
         logger.info(f"Full transcript (first 100 characters): {full_transcript[:100]}...")
 
