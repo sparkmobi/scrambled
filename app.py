@@ -19,9 +19,6 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# Initialize Groq client
-st.session_state.client = Groq(api_key=get_available_key(datetime.now().timestamp()))
-
 # Maximum chunk size (10MB in bytes)
 MAX_CHUNK_SIZE = 10 * 1024 * 1024
 
