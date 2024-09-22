@@ -19,15 +19,8 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# Get Groq API key from environment variable
-GROQ_API_KEY = None
-
-if not GROQ_API_KEY:
-    st.error("GROQ_API_KEY is not set in the environment variables")
-    st.stop()
-
 # Initialize Groq client
-st.session_state.client = Groq(api_key=GROQ_API_KEY)
+st.session_state.client = Groq(api_key=get_available_key(datetime.now().timestamp()))
 
 # Maximum chunk size (10MB in bytes)
 MAX_CHUNK_SIZE = 10 * 1024 * 1024
