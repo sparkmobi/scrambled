@@ -33,7 +33,9 @@ def get_available_key(audio_duration):
         .lt("day_audio", DAY_AUDIO_LIMIT - audio_duration)\
         .order("hour_audio")
     
-    logger.info(f"Query: {query.query()}")
+    logger.info(f"Query parameters: minute_count < {MINUTE_LIMIT}, day_count < {DAY_LIMIT}, "
+                f"hour_audio < {HOUR_AUDIO_LIMIT - audio_duration}, "
+                f"day_audio < {DAY_AUDIO_LIMIT - audio_duration}")
     
     response = query.execute()
     
