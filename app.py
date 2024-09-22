@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 import logging
 from groq import Groq
 import ffmpeg
-from api_key_manager import get_available_key, reset_counters
+from api_key_manager import get_available_key, reset_counters, logger as api_key_logger
 from datetime import datetime, timedelta
 import time
 
