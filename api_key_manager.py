@@ -17,12 +17,16 @@ DAY_AUDIO_LIMIT = 28800  # seconds
 def get_available_key(audio_duration):
     now = datetime.now()
     
+    # Reset counters if necessary
+    reset_counters()
+    
     # Query for an available key
     response = supabase.table("api_keys").select("*")\
         .lt("minute_count", MINUTE_LIMIT)\
         .lt("day_count", DAY_LIMIT)\
         .lt("hour_audio", HOUR_AUDIO_LIMIT - audio_duration)\
         .lt("day_audio", DAY_AUDIO_LIMIT - audio_duration)\
+        .order("last_used")\
         .execute()
     
     if len(response.data) == 0:
@@ -42,14 +46,20 @@ def get_available_key(audio_duration):
     
     return key["api_key"]
 
-def reset_minute_counts():
-    supabase.table("api_keys").update({"minute_count": 0}).neq("id", "").execute()
-
-def reset_hour_audio():
-    supabase.table("api_keys").update({"hour_audio": 0}).neq("id", "").execute()
-
-def reset_day_counts():
-    supabase.table("api_keys").update({
-        "day_count": 0,
-        "day_audio": 0
-    }).neq("id", "").execute()
+def reset_counters():
+    now = datetime.now()
+    
+    # Reset minute counts
+    supabase.table("api_keys").update({"minute_count": 0})\
+        .lt("last_used", (now - timedelta(minutes=1)).isoformat())\
+        .execute()
+    
+    # Reset hour audio
+    supabase.table("api_keys").update({"hour_audio": 0})\
+        .lt("last_used", (now - timedelta(hours=1)).isoformat())\
+        .execute()
+    
+    # Reset day counts and audio
+    supabase.table("api_keys").update({"day_count": 0, "day_audio": 0})\
+        .lt("last_used", (now - timedelta(days=1)).isoformat())\
+        .execute()
