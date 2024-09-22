@@ -61,6 +61,7 @@ def transcribe_chunk(chunk, chunk_number, audio_duration):
             chunk.export(temp_file_path, format="mp3", bitrate="32k")
             
             # Get an available API key
+            logger.info(f"Requesting API key for chunk {chunk_number} with duration {audio_duration} seconds")
             api_key = get_available_key(audio_duration)
             if api_key is None:
                 raise Exception("No available API keys")
