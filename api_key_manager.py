@@ -19,54 +19,58 @@ DAY_AUDIO_LIMIT = 28800  # seconds
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def get_available_key(audio_duration):
-    now = datetime.now()
+def get_available_key(audio_duration, max_retries=60, retry_delay=1):
+    for attempt in range(max_retries):
+        now = datetime.now()
+        
+        # Reset counters if necessary
+        reset_counters()
+        
+        # Log all API keys before filtering
+        all_keys = supabase.table("api_keys").select("*").execute()
+        logger.info(f"Total API keys: {len(all_keys.data)}")
+        for key in all_keys.data:
+            logger.info(f"Key ID: {key['id']}, hour_audio: {key['hour_audio']}, minute_count: {key['minute_count']}, day_count: {key['day_count']}, day_audio: {key['day_audio']}")
+        
+        # Query for available keys
+        query = supabase.table("api_keys").select("*")\
+            .lt("minute_count", MINUTE_LIMIT)\
+            .lt("day_count", DAY_LIMIT)\
+            .lt("hour_audio", HOUR_AUDIO_LIMIT - audio_duration)\
+            .lt("day_audio", DAY_AUDIO_LIMIT - audio_duration)\
+            .order("hour_audio")
+        
+        logger.info(f"Query parameters: minute_count < {MINUTE_LIMIT}, day_count < {DAY_LIMIT}, "
+                    f"hour_audio < {HOUR_AUDIO_LIMIT - audio_duration}, "
+                    f"day_audio < {DAY_AUDIO_LIMIT - audio_duration}")
+        
+        response = query.execute()
+        
+        logger.info(f"Available keys: {len(response.data)}")
+        for key in response.data:
+            logger.info(f"Key ID: {key['id']}, hour_audio: {key['hour_audio']}, minute_count: {key['minute_count']}, day_count: {key['day_count']}, day_audio: {key['day_audio']}")
+        
+        if len(response.data) > 0:
+            # Get the first available key (with lowest hour_audio usage)
+            key = response.data[0]
+            logger.info(f"Selected key ID: {key['id']}, hour_audio: {key['hour_audio']}")
+            
+            # Update the usage counts
+            supabase.table("api_keys").update({
+                "minute_count": key["minute_count"] + 1,
+                "day_count": key["day_count"] + 1,
+                "hour_audio": key["hour_audio"] + audio_duration,
+                "day_audio": key["day_audio"] + audio_duration,
+                "last_used": now.isoformat()
+            }).eq("id", key["id"]).execute()
+            
+            return key["api_key"]
+        
+        logger.warning(f"No available API keys. Retrying in {retry_delay} seconds. Attempt {attempt + 1}/{max_retries}")
+        time.sleep(retry_delay)
     
-    # Reset counters if necessary
-    reset_counters()
-    
-    # Log all API keys before filtering
-    all_keys = supabase.table("api_keys").select("*").execute()
-    logger.info(f"Total API keys: {len(all_keys.data)}")
-    for key in all_keys.data:
-        logger.info(f"Key ID: {key['id']}, hour_audio: {key['hour_audio']}, minute_count: {key['minute_count']}, day_count: {key['day_count']}, day_audio: {key['day_audio']}")
-    
-    # Query for available keys
-    query = supabase.table("api_keys").select("*")\
-        .lt("minute_count", MINUTE_LIMIT)\
-        .lt("day_count", DAY_LIMIT)\
-        .lt("hour_audio", HOUR_AUDIO_LIMIT - audio_duration)\
-        .lt("day_audio", DAY_AUDIO_LIMIT - audio_duration)\
-        .order("hour_audio")
-    
-    logger.info(f"Query parameters: minute_count < {MINUTE_LIMIT}, day_count < {DAY_LIMIT}, "
-                f"hour_audio < {HOUR_AUDIO_LIMIT - audio_duration}, "
-                f"day_audio < {DAY_AUDIO_LIMIT - audio_duration}")
-    
-    response = query.execute()
-    
-    logger.info(f"Available keys: {len(response.data)}")
-    for key in response.data:
-        logger.info(f"Key ID: {key['id']}, hour_audio: {key['hour_audio']}, minute_count: {key['minute_count']}, day_count: {key['day_count']}, day_audio: {key['day_audio']}")
-    
-    if len(response.data) == 0:
-        logger.warning("No available API keys")
-        return None
-    
-    # Get the first available key (with lowest hour_audio usage)
-    key = response.data[0]
-    logger.info(f"Selected key ID: {key['id']}, hour_audio: {key['hour_audio']}")
-    
-    # Update the usage counts
-    supabase.table("api_keys").update({
-        "minute_count": key["minute_count"] + 1,
-        "day_count": key["day_count"] + 1,
-        "hour_audio": key["hour_audio"] + audio_duration,
-        "day_audio": key["day_audio"] + audio_duration,
-        "last_used": now.isoformat()
-    }).eq("id", key["id"]).execute()
-    
-    return key["api_key"]
+    logger.error("Max retries reached. No available API keys.")
+    return None
 
 def reset_counters():
     now = datetime.now()
