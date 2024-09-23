@@ -51,5 +51,6 @@ webencodings==0.5.1
 yt-dlp==2024.08.06
 zopfli==0.2.3
 pydub==0.25.1
+pytube==15.0.0
 ffmpeg-python==0.2.0
 supabase==2.7.4
