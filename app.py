@@ -55,43 +55,39 @@ def split_audio(audio_file, max_duration=1750):
     return chunks
 
 def transcribe_chunk(chunk, chunk_number, audio_duration):
-    while True:
-        try:
-            temp_file_path = os.path.join(SCRIPT_DIR, f"temp_chunk_{chunk_number}.mp3")
-            chunk.export(temp_file_path, format="mp3", bitrate="32k")
-            
-            # Get an available API key
-            logger.info(f"Requesting API key for chunk {chunk_number} with duration {audio_duration} seconds")
-            api_key = get_available_key(audio_duration)
-            if api_key is None:
-                logger.error(f"No available API keys for chunk {chunk_number}")
-                raise Exception("No available API keys")
-            
-            logger.info(f"Retrieved API key for chunk {chunk_number}")
-            
-            # Initialize Groq client with the new API key
-            client = Groq(api_key=api_key)
-            
-            with open(temp_file_path, "rb") as audio_file:
-                response = client.audio.transcriptions.create(
-                    file=audio_file,
-                    model="whisper-large-v3",
-                    prompt="",
-                    temperature=0.0,
-                    response_format="text"
-                )
-            
+    temp_file_path = os.path.join(SCRIPT_DIR, f"temp_chunk_{chunk_number}.mp3")
+    chunk.export(temp_file_path, format="mp3", bitrate="32k")
+    
+    try:
+        # Get an available API key
+        logger.info(f"Requesting API key for chunk {chunk_number} with duration {audio_duration} seconds")
+        api_key = get_available_key(audio_duration)
+        if api_key is None:
+            raise Exception("No available API keys after maximum retries")
+        
+        logger.info(f"Retrieved API key for chunk {chunk_number}")
+        
+        # Initialize Groq client with the new API key
+        client = Groq(api_key=api_key)
+        
+        with open(temp_file_path, "rb") as audio_file:
+            response = client.audio.transcriptions.create(
+                file=audio_file,
+                model="whisper-large-v3",
+                prompt="",
+                temperature=0.0,
+                response_format="text"
+            )
+        
+        logger.info(f"Chunk {chunk_number} processed successfully")
+        
+        return str(response).strip()
+    except Exception as e:
+        logger.error(f"Error in transcribe_chunk {chunk_number}: {str(e)}")
+        raise
+    finally:
+        if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
-            logger.info(f"Chunk {chunk_number} processed successfully")
-            
-            return str(response).strip()
-        except Exception as e:
-            logger.error(f"Error in transcribe_chunk {chunk_number}: {str(e)}")
-            if "rate limit" in str(e).lower():
-                logger.info(f"Rate limit reached for chunk {chunk_number}. Retrying with a different API key.")
-                time.sleep(1)  # Wait a bit before retrying
-                continue
-            raise
 
 def process_audio(file_path):
     try:
