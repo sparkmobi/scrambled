@@ -19,7 +19,7 @@ DAY_AUDIO_LIMIT = 28800  # seconds
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def get_available_key(audio_duration, max_retries=60, retry_delay=1):
+def get_available_key(audio_duration, max_retries=60, retry_delay=60):
     for attempt in range(max_retries):
         now = datetime.now()
         
