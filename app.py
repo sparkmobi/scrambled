@@ -10,6 +10,7 @@ import ffmpeg
 from api_key_manager import get_available_key, reset_counters, logger as api_key_logger
 from datetime import datetime, timedelta
 import time
+from helper import download_youtube_audio
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -165,7 +166,7 @@ def download_file(url):
 
 st.title("Audio/Video Transcription App")
 
-input_method = st.radio("Choose input method:", ("URL", "File Upload"))
+input_method = st.radio("Choose input method:", ("URL", "File Upload", "YouTube URL"))
 
 if input_method == "URL":
     url = st.text_input("Enter the URL of the audio or video file:")
@@ -185,6 +186,24 @@ if input_method == "URL":
                         os.remove(file_path)
                 else:
                     st.error("Failed to download the file. Please check the URL and try again.")
+elif input_method == "YouTube URL":
+    youtube_url = st.text_input("Enter the YouTube URL of the video:")
+    if youtube_url:
+        if st.button("Transcribe"):
+            with st.spinner("Downloading and transcribing..."):
+                file_path = download_youtube_audio(SCRIPT_DIR, youtube_url)
+                if file_path:
+                    try:
+                        transcription = process_audio(file_path)
+                        if transcription:
+                            st.success("Transcription complete!")
+                            st.text_area("Transcription:", value=transcription, height=300)
+                    except Exception as e:
+                        st.error(f"An error occurred during transcription: {str(e)}")
+                    finally:
+                        os.remove(file_path)
+                else:
+                    st.error("Failed to download the YouTube video. Please check the URL and try again.")
 else:
     uploaded_file = st.file_uploader("Choose an audio file", type=["mp3", "wav", "m4a", "ogg"])
     if uploaded_file:
