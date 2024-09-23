@@ -191,7 +191,7 @@ elif input_method == "YouTube URL":
     if youtube_url:
         if st.button("Transcribe"):
             with st.spinner("Downloading and transcribing..."):
-                file_path = download_youtube_audio(SCRIPT_DIR, youtube_url, cookies_file="path/to/cookies.txt")
+                file_path = download_youtube_audio(SCRIPT_DIR, youtube_url)
                 if file_path:
                     try:
                         transcription = process_audio(file_path)
