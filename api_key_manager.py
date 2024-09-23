@@ -1,94 +1,115 @@
-import os
-from supabase import create_client, Client
-from datetime import datetime, timedelta
-import time
-import logging
+import os, sys
+from os.path import dirname as up
 
-# Initialize Supabase client
-url: str = "https://deqoekrxwvziwmclcthu.supabase.co"
-key: str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRlcW9la3J4d3Z6aXdtY2xjdGh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE2Nzg2NjQ5OTksImV4cCI6MTk5NDI0MDk5OX0.9UvqJRTRSiY99vyEfGrJ3wSLtI3ZbwRj07BaGbE9HM4"
-supabase: Client = create_client(url, key)
+sys.path.append(os.path.abspath(os.path.join(up(__file__), os.pardir)))
 
-# API limits for whisper-large-v3
-MINUTE_LIMIT = 20
-DAY_LIMIT = 2000
-HOUR_AUDIO_LIMIT = 7200  # seconds
-DAY_AUDIO_LIMIT = 28800  # seconds
+import re
+from datetime import datetime
+from yt_dlp import YoutubeDL
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-def get_available_key(audio_duration, max_retries=60, retry_delay=60):
-    for attempt in range(max_retries):
-        now = datetime.now()
-        
-        # Reset counters if necessary
-        reset_counters()
-        
-        # Log all API keys before filtering
-        all_keys = supabase.table("api_keys").select("*").execute()
-        logger.info(f"Total API keys: {len(all_keys.data)}")
-        for key in all_keys.data:
-            logger.info(f"Key ID: {key['id']}, hour_audio: {key['hour_audio']}, minute_count: {key['minute_count']}, day_count: {key['day_count']}, day_audio: {key['day_audio']}")
-        
-        # Query for available keys
-        query = supabase.table("api_keys").select("*")\
-            .lt("minute_count", MINUTE_LIMIT)\
-            .lt("day_count", DAY_LIMIT)\
-            .lt("hour_audio", HOUR_AUDIO_LIMIT - audio_duration)\
-            .lt("day_audio", DAY_AUDIO_LIMIT - audio_duration)\
-            .order("hour_audio")
-        
-        logger.info(f"Query parameters: minute_count < {MINUTE_LIMIT}, day_count < {DAY_LIMIT}, "
-                    f"hour_audio < {HOUR_AUDIO_LIMIT - audio_duration}, "
-                    f"day_audio < {DAY_AUDIO_LIMIT - audio_duration}")
-        
-        response = query.execute()
-        
-        logger.info(f"Available keys: {len(response.data)}")
-        for key in response.data:
-            logger.info(f"Key ID: {key['id']}, hour_audio: {key['hour_audio']}, minute_count: {key['minute_count']}, day_count: {key['day_count']}, day_audio: {key['day_audio']}")
-        
-        if len(response.data) > 0:
-            # Get the first available key (with lowest hour_audio usage)
-            key = response.data[0]
-            logger.info(f"Selected key ID: {key['id']}, hour_audio: {key['hour_audio']}")
-            
-            # Update the usage counts
-            supabase.table("api_keys").update({
-                "minute_count": key["minute_count"] + 1,
-                "day_count": key["day_count"] + 1,
-                "hour_audio": key["hour_audio"] + audio_duration,
-                "day_audio": key["day_audio"] + audio_duration,
-                "last_used": now.isoformat()
-            }).eq("id", key["id"]).execute()
-            
-            return key["api_key"]
-        
-        logger.warning(f"No available API keys. Retrying in {retry_delay} seconds. Attempt {attempt + 1}/{max_retries}")
-        time.sleep(retry_delay)
-    
-    logger.error("Max retries reached. No available API keys.")
+def save_as_md(file_path: str, content: str) -> None:
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    with open(file_path, "w") as f:
+        f.write(content)
+
+
+def sanitize_filename(filename):
+    # Remove file extension
+    filename = os.path.splitext(filename)[0]
+
+    # Replace any character that's not lowercase alphanumeric or dash with a dash
+    sanitized = re.sub(r"[^a-z0-9-]", "-", filename.lower())
+
+    # Remove leading and trailing dashes
+    sanitized = sanitized.strip("-")
+
+    # Replace multiple consecutive dashes with a single dash
+    sanitized = re.sub(r"-+", "-", sanitized)
+
+    return sanitized
+
+
+def extract_filename(filepath):
+    # Get the base name (file name with extension)
+    base_name = os.path.basename(filepath)
+
+    # Split the base name and extension
+    file_name = os.path.splitext(base_name)[0]
+
+    return base_name, file_name
+
+
+def return_youtube_id(url: str):
+    """
+    Returns YouTube ID of the video.
+
+    Args:
+        url: youtube video link
+    Returns:
+        str: youtube id
+    """
+    pattern = r"(?:v=|\/)([0-9A-Za-z_-]{11})"
+    match = re.search(pattern, url)
+    if match:
+        return match.group(1)
     return None
 
-def reset_counters():
-    now = datetime.now()
-    
-    # Reset minute counts
-    minute_reset = supabase.table("api_keys").update({"minute_count": 0})\
-        .lt("last_used", (now - timedelta(seconds=30)).isoformat())\
-        .execute()
-    logger.info(f"Minute count reset for {len(minute_reset.data)} keys")
-    
-    # Reset hour audio
-    hour_reset = supabase.table("api_keys").update({"hour_audio": 0})\
-        .lt("last_used", (now - timedelta(minutes=30)).isoformat())\
-        .execute()
-    logger.info(f"Hour audio reset for {len(hour_reset.data)} keys")
-    
-    # Reset day counts and audio
-    day_reset = supabase.table("api_keys").update({"day_count": 0, "day_audio": 0})\
-        .lt("last_used", (now - timedelta(hours=12)).isoformat())\
-        .execute()
-    logger.info(f"Day count and audio reset for {len(day_reset.data)} keys")
+
+def get_youtube_title(url: str):
+    """
+    Get the title of a YouTube video.
+
+    Args:
+        url: youtube video link
+    Returns:
+        str: video title
+    """
+    ydl_opts = {"quiet": True}
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        return info.get("title", None)
+
+
+def download_youtube_audio(dir_path: str, url: str, cookies_file: str = "cookies.txt"):
+    try:
+        youtube_id = return_youtube_id(url)
+        if not youtube_id:
+            raise ValueError("Invalid YouTube URL")
+
+        video_title = get_youtube_title(url)
+        if not video_title:
+            raise ValueError("Could not retrieve video title")
+
+        sanitized_title = sanitize_filename(video_title)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_filename = f"{sanitized_title}_{timestamp}"
+        output_file_path = os.path.join(dir_path, f"{output_filename}.mp3")
+
+        ytdl_opts = {
+            "format": "bestaudio/best",
+            "postprocessors": [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }
+            ],
+            "outtmpl": os.path.join(dir_path, output_filename),
+            "quiet": True,
+            "cookiefile": cookies_file,  # Use cookies file
+        }
+
+        with YoutubeDL(ytdl_opts) as ydl:
+            ydl.cache.remove()
+            ydl.download([url])
+
+        return output_file_path
+
+    except Exception as ex:
+        return None
+
+
+if __name__ == "__main__":
+    # Example usage
+    print(download_youtube_audio("data/audio", "https://youtu.be/VCwk0Xk1oR0"))
