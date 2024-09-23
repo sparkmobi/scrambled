@@ -1,11 +1,7 @@
-import os, sys
-from os.path import dirname as up
-
-sys.path.append(os.path.abspath(os.path.join(up(__file__), os.pardir)))
-
+import os
 import re
 from datetime import datetime
-from yt_dlp import YoutubeDL
+from pytube import YouTube
 
 
 def save_as_md(file_path: str, content: str) -> None:
@@ -65,13 +61,11 @@ def get_youtube_title(url: str):
     Returns:
         str: video title
     """
-    ydl_opts = {"quiet": True}
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        return info.get("title", None)
+    yt = YouTube(url)
+    return yt.title
 
 
-def download_youtube_audio(dir_path: str, url: str, cookies_file: str = "cookies.txt"):
+def download_youtube_audio(dir_path: str, url: str):
     try:
         youtube_id = return_youtube_id(url)
         if not youtube_id:
@@ -83,26 +77,12 @@ def download_youtube_audio(dir_path: str, url: str, cookies_file: str = "cookies
 
         sanitized_title = sanitize_filename(video_title)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_filename = f"{sanitized_title}_{timestamp}"
-        output_file_path = os.path.join(dir_path, f"{output_filename}.mp3")
+        output_filename = f"{sanitized_title}_{timestamp}.mp3"
+        output_file_path = os.path.join(dir_path, output_filename)
 
-        ytdl_opts = {
-            "format": "bestaudio/best",
-            "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }
-            ],
-            "outtmpl": os.path.join(dir_path, output_filename),
-            "quiet": True,
-            "cookiefile": cookies_file,  # Use cookies file
-        }
-
-        with YoutubeDL(ytdl_opts) as ydl:
-            ydl.cache.remove()
-            ydl.download([url])
+        yt = YouTube(url)
+        audio_stream = yt.streams.filter(only_audio=True).first()
+        audio_stream.download(output_path=dir_path, filename=output_filename)
 
         return output_file_path
 
