@@ -71,7 +71,7 @@ def get_youtube_title(url: str):
         return info.get("title", None)
 
 
-def download_youtube_audio(dir_path: str, url: str):
+def download_youtube_audio(dir_path: str, url: str, cookies_file: str = "cookies.txt"):
     try:
         youtube_id = return_youtube_id(url)
         if not youtube_id:
@@ -97,6 +97,7 @@ def download_youtube_audio(dir_path: str, url: str):
             ],
             "outtmpl": os.path.join(dir_path, output_filename),
             "quiet": True,
+            "cookiefile": cookies_file,  # Use cookies file
         }
 
         with YoutubeDL(ytdl_opts) as ydl:
