@@ -4,15 +4,12 @@ from os.path import dirname as up
 sys.path.append(os.path.abspath(os.path.join(up(__file__), os.pardir)))
 
 import re
-from custom_logger import logger
-
 from datetime import datetime
 from yt_dlp import YoutubeDL
 
 
 def save_as_md(file_path: str, content: str) -> None:
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    logger.info(f"Saving content to {file_path}")
     with open(file_path, "w") as f:
         f.write(content)
 
@@ -106,17 +103,12 @@ def download_youtube_audio(dir_path: str, url: str):
             ydl.cache.remove()
             ydl.download([url])
 
-        logger.info(f"Successfully downloaded: {output_file_path}")
         return output_file_path
 
     except Exception as ex:
-        logger.error(f"Error downloading audio: {str(ex)}")
         return None
 
 
 if __name__ == "__main__":
     # Example usage
-    # original_filename = "My Audio File (1).mp3"
-    # sanitized_filename = sanitize_filename(original_filename)
-    # print(sanitized_filename)  # Output: my-audio-file-1
     print(download_youtube_audio("data/audio", "https://youtu.be/VCwk0Xk1oR0"))
