@@ -82,11 +82,15 @@ def download_youtube_audio(dir_path: str, url: str):
 
         yt = YouTube(url)
         audio_stream = yt.streams.filter(only_audio=True).first()
+        if not audio_stream:
+            raise ValueError("No audio stream available")
+
         audio_stream.download(output_path=dir_path, filename=output_filename)
 
         return output_file_path
 
     except Exception as ex:
+        print(f"Error downloading audio: {str(ex)}")
         return None
 
 
