@@ -158,10 +158,6 @@ def process_audio(file_path):
                 # Instead of raising immediately, we'll continue with the next chunk
                 transcripts.append(f"Error in chunk {i+1}: {str(e)}")
 
-        # Calculate total size of all chunks
-        total_chunk_size = sum(os.path.getsize(f) for f in temp_files if os.path.exists(f))
-        logger.info(f"Total size of all chunks: {total_chunk_size / (1024 * 1024):.2f} MB")
-
         errors = [t for t in transcripts if t.startswith("Error in chunk")]
         if errors:
             error_msgs = "\n".join(errors)
