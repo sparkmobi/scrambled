@@ -83,8 +83,9 @@ def split_audio(audio_file, max_duration=1750):
         chunks.append(chunk)
     return chunks
 
-def transcribe_chunk(chunk, chunk_number, audio_duration):
-    temp_file_path = os.path.join(SCRIPT_DIR, f"temp_chunk_{chunk_number}.mp3")
+def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir):
+    timestamp = int(time.time() * 1000)  # Current time in milliseconds
+    temp_file_path = os.path.join(temp_dir, f"temp_{timestamp}_{chunk_number}.mp3")
     chunk.export(temp_file_path, format="mp3", bitrate="32k")
     
     try:
@@ -143,15 +144,8 @@ def process_audio(file_path):
         temp_files = []
         for i, chunk in enumerate(chunks):
             try:
-                temp_file_path = os.path.join(temp_dir, f"temp_chunk_{i+1}.mp3")
-                chunk.export(temp_file_path, format="mp3", bitrate="32k")
-                temp_files.append(temp_file_path)
-                
-                chunk_size = os.path.getsize(temp_file_path)
-                logger.info(f"Chunk {i+1} size: {chunk_size / 1024:.2f} KB")
-                
                 audio_duration = len(chunk) / 1000  # Convert milliseconds to seconds
-                transcript = transcribe_chunk(chunk, i+1, audio_duration)
+                transcript = transcribe_chunk(chunk, i+1, audio_duration, temp_dir)
                 logger.info(f"Transcript for chunk {i+1}: {transcript[:50]}...")
                 transcripts.append(transcript)
                 progress = (i + 1) / len(chunks)
