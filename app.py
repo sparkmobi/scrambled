@@ -112,7 +112,7 @@ def process_audio(file_path):
         file_extension = os.path.splitext(file_path)[1].lower()
         if file_extension == '.opus':
             logger.info("Detected OPUS file. Converting to MP3...")
-            mp3_file = os.path.join(SCRIPT_DIR, "converted_audio.mp3")
+            mp3_file = os.path.join(SCRIPT_DIR, generate_unique_filename("converted_audio", ".mp3"))
             file_path = convert_opus_to_mp3(file_path, mp3_file)
 
         # Log the size of the input file
@@ -120,7 +120,7 @@ def process_audio(file_path):
         logger.info(f"Input file size: {input_size / (1024 * 1024):.2f} MB")
 
         # Preprocess the audio file
-        preprocessed_file = os.path.join(SCRIPT_DIR, "preprocessed_audio.mp3")
+        preprocessed_file = os.path.join(SCRIPT_DIR, generate_unique_filename("preprocessed_audio", ".mp3"))
         preprocess_audio(file_path, preprocessed_file)
         
         chunks = split_audio(preprocessed_file)
