@@ -181,11 +181,16 @@ def process_audio(file_path):
 def download_file(url):
     response = requests.get(url)
     if response.status_code == 200:
-        temp_file_path = os.path.join(SCRIPT_DIR, "temp_download.mp3")
+        file_extension = os.path.splitext(url)[1] or '.mp3'  # Default to .mp3 if no extension
+        temp_file_path = os.path.join(SCRIPT_DIR, generate_unique_filename("temp_download", file_extension))
         with open(temp_file_path, "wb") as temp_file:
             temp_file.write(response.content)
         return temp_file_path
     return None
+
+def generate_unique_filename(prefix, extension):
+    timestamp = int(time.time() * 1000)  # Current time in milliseconds
+    return f"{prefix}_{timestamp}{extension}"
 
 st.title("Audio/Video Transcription App")
 
@@ -232,7 +237,8 @@ else:
     if uploaded_file:
         if st.button("Transcribe"):
             with st.spinner("Transcribing..."):
-                temp_file_path = os.path.join(SCRIPT_DIR, f"temp_upload.mp3")
+                file_extension = os.path.splitext(uploaded_file.name)[1]
+                temp_file_path = os.path.join(SCRIPT_DIR, generate_unique_filename("temp_upload", file_extension))
                 with open(temp_file_path, "wb") as temp_file:
                     temp_file.write(uploaded_file.getvalue())
                 try:
