@@ -13,6 +13,7 @@ import time
 from helper import download_youtube_audio
 import tempfile
 import shutil
+import random
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -83,41 +84,44 @@ def split_audio(audio_file, max_duration=1750):
         chunks.append(chunk)
     return chunks
 
-def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir):
-    timestamp = int(time.time() * 1000)  # Current time in milliseconds
+def exponential_backoff(attempt, max_delay=60):
+    delay = min(2 ** attempt + random.uniform(0, 1), max_delay)
+    time.sleep(delay)
+
+def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=3):
+    timestamp = int(time.time() * 1000)
     temp_file_path = os.path.join(temp_dir, f"temp_{timestamp}_{chunk_number}.mp3")
     chunk.export(temp_file_path, format="mp3", bitrate="32k")
     
-    try:
-        # Get an available API key
-        logger.info(f"Requesting API key for chunk {chunk_number} with duration {audio_duration} seconds")
-        api_key = get_available_key(audio_duration)
-        if api_key is None:
-            raise Exception("No available API keys after maximum retries")
-        
-        logger.info(f"Retrieved API key for chunk {chunk_number}")
-        
-        # Initialize Groq client with the new API key
-        client = Groq(api_key=api_key)
-        
-        with open(temp_file_path, "rb") as audio_file:
-            response = client.audio.transcriptions.create(
-                file=audio_file,
-                model="whisper-large-v3",
-                prompt="",
-                temperature=0.0,
-                response_format="text"
-            )
-        
-        logger.info(f"Chunk {chunk_number} processed successfully")
-        
-        return str(response).strip()
-    except Exception as e:
-        logger.error(f"Error in transcribe_chunk {chunk_number}: {str(e)}")
-        raise
-    finally:
-        if os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"Attempting to transcribe chunk {chunk_number} (Attempt {attempt + 1}/{max_retries})")
+            api_key = get_available_key(audio_duration)
+            if api_key is None:
+                raise Exception("No available API keys after maximum retries")
+            
+            client = Groq(api_key=api_key)
+            
+            with open(temp_file_path, "rb") as audio_file:
+                response = client.audio.transcriptions.create(
+                    file=audio_file,
+                    model="whisper-large-v3",
+                    prompt="",
+                    temperature=0.0,
+                    response_format="text"
+                )
+            
+            logger.info(f"Chunk {chunk_number} processed successfully")
+            return str(response).strip()
+        except Exception as e:
+            logger.error(f"Error in transcribe_chunk {chunk_number} (Attempt {attempt + 1}/{max_retries}): {str(e)}")
+            if attempt < max_retries - 1:
+                exponential_backoff(attempt)
+            else:
+                raise
+        finally:
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
 
 def process_audio(file_path):
     temp_dir = create_temp_dir()
@@ -141,23 +145,18 @@ def process_audio(file_path):
         logger.info(f"Audio split into {len(chunks)} chunks")
 
         transcripts = []
-        temp_files = []
         for i, chunk in enumerate(chunks):
             try:
-                audio_duration = len(chunk) / 1000  # Convert milliseconds to seconds
+                audio_duration = len(chunk) / 1000
                 transcript = transcribe_chunk(chunk, i+1, audio_duration, temp_dir)
-                logger.info(f"Transcript for chunk {i+1}: {transcript[:50]}...")
                 transcripts.append(transcript)
                 progress = (i + 1) / len(chunks)
                 st.progress(progress)
-
-                # Add a delay between requests to avoid overwhelming the API
                 time.sleep(1)
             except Exception as e:
                 logger.error(f"Error processing chunk {i+1}: {str(e)}")
-                if hasattr(e, 'response') and hasattr(e.response, 'json'):
-                    logger.error(f"API response: {e.response.json()}")
-                raise  # Re-raise the exception to stop processing if a chunk fails
+                # Instead of raising immediately, we'll continue with the next chunk
+                transcripts.append(f"Error in chunk {i+1}: {str(e)}")
 
         # Calculate total size of all chunks
         total_chunk_size = sum(os.path.getsize(f) for f in temp_files if os.path.exists(f))
