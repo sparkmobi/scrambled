@@ -107,7 +107,6 @@ def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=
                     file=audio_file,
                     model="whisper-large-v3",
                     prompt="",
-                    language="en",
                     temperature=0.0,
                     response_format="text"
                 )
