@@ -25,6 +25,22 @@ MAX_CHUNK_SIZE = 10 * 1024 * 1024
 # Get the current script directory
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+def convert_opus_to_mp3(input_file, output_file):
+    """Convert OPUS file to MP3."""
+    try:
+        (
+            ffmpeg
+            .input(input_file)
+            .output(output_file, acodec='libmp3lame', b='128k')
+            .overwrite_output()
+            .run(capture_stdout=True, capture_stderr=True)
+        )
+        logger.info(f"Converted OPUS to MP3: {output_file}")
+        return output_file
+    except ffmpeg.Error as e:
+        logger.error(f"Error converting OPUS to MP3: {e.stderr.decode()}")
+        raise
+
 def preprocess_audio(input_file, output_file):
     """Preprocess audio file to 16kHz mono MP3."""
     try:
@@ -92,6 +108,13 @@ def transcribe_chunk(chunk, chunk_number, audio_duration):
 
 def process_audio(file_path):
     try:
+        # Check if the file is OPUS format
+        file_extension = os.path.splitext(file_path)[1].lower()
+        if file_extension == '.opus':
+            logger.info("Detected OPUS file. Converting to MP3...")
+            mp3_file = os.path.join(SCRIPT_DIR, "converted_audio.mp3")
+            file_path = convert_opus_to_mp3(file_path, mp3_file)
+
         # Log the size of the input file
         input_size = os.path.getsize(file_path)
         logger.info(f"Input file size: {input_size / (1024 * 1024):.2f} MB")
@@ -205,7 +228,7 @@ elif input_method == "YouTube URL":
                 else:
                     st.error("Failed to download the YouTube video. Please check the URL and try again.")
 else:
-    uploaded_file = st.file_uploader("Choose an audio file", type=["mp3", "wav", "m4a", "ogg"])
+    uploaded_file = st.file_uploader("Choose an audio file", type=["mp3", "wav", "m4a", "ogg", "opus"])
     if uploaded_file:
         if st.button("Transcribe"):
             with st.spinner("Transcribing..."):
