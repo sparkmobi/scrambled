@@ -222,34 +222,26 @@ input_method = st.radio("Choose input method:", ("URL", "File Upload", "YouTube 
 
 if input_method == "URL":
     urls = st.text_area("Enter the URLs of the audio or video files (one per line):")
-    if urls:
-        if st.button("Transcribe"):
-            urls = urls.split('\n')
-            with st.spinner("Downloading and transcribing..."):
-                def process_url(url):
-                    file_path, temp_dir = download_file(url)
-                    if file_path:
-                        try:
-                            transcription = process_audio(file_path)
-                            if transcription:
-                                st.success(f"Transcription complete for {url}!")
-                                st.text_area(f"Transcription for {url}:", value=transcription, height=300)
-                        except Exception as e:
-                            st.error(f"An error occurred during transcription of {url}: {str(e)}")
-                        finally:
-                            if temp_dir:
-                                cleanup_temp_files(temp_dir)
-                    else:
-                        st.error(f"Failed to download the file from {url}. Please check the URL and try again.")
-
-                threads = []
-                for url in urls:
-                    thread = threading.Thread(target=process_url, args=(url,))
-                    threads.append(thread)
-                    thread.start()
-
-                for thread in threads:
-                    thread.join()
+    if urls and st.button("Transcribe"):
+        urls = urls.split('\n')
+        progress_bar = st.progress(0)
+        for i, url in enumerate(urls):
+            with st.spinner(f"Processing URL {i+1}/{len(urls)}: {url}"):
+                file_path, temp_dir = download_file(url)
+                if file_path:
+                    try:
+                        transcription = process_audio(file_path)
+                        if transcription:
+                            st.success(f"Transcription complete for {url}!")
+                            st.text_area(f"Transcription for {url}:", value=transcription, height=300)
+                    except Exception as e:
+                        st.error(f"An error occurred during transcription of {url}: {str(e)}")
+                    finally:
+                        if temp_dir:
+                            cleanup_temp_files(temp_dir)
+                else:
+                    st.error(f"Failed to download the file from {url}. Please check the URL and try again.")
+            progress_bar.progress((i + 1) / len(urls))
 elif input_method == "YouTube URL":
     youtube_url = st.text_input("Enter the YouTube URL of the video:")
     if youtube_url:
