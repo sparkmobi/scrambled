@@ -14,6 +14,8 @@ from helper import download_youtube_audio
 import tempfile
 import shutil
 import random
+import threading
+from tempfile import NamedTemporaryFile
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +29,10 @@ MAX_CHUNK_SIZE = 10 * 1024 * 1024
 
 # Get the current script directory
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Add this at the beginning of the file
+file_lock = threading.Lock()
+api_key_lock = threading.Lock()
 
 def create_temp_dir():
     return tempfile.mkdtemp(dir=SCRIPT_DIR)
@@ -89,16 +95,18 @@ def exponential_backoff(attempt, max_delay=60):
     time.sleep(delay)
 
 def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=3):
-    timestamp = int(time.time() * 1000)
-    temp_file_path = os.path.join(temp_dir, f"temp_{timestamp}_{chunk_number}.mp3")
-    chunk.export(temp_file_path, format="mp3", bitrate="32k")
-    
     for attempt in range(max_retries):
         try:
+            with NamedTemporaryFile(dir=temp_dir, suffix='.mp3', delete=False) as temp_file:
+                temp_file_path = temp_file.name
+                chunk.export(temp_file_path, format="mp3", bitrate="32k")
+            
             logger.info(f"Attempting to transcribe chunk {chunk_number} (Attempt {attempt + 1}/{max_retries})")
-            api_key = get_available_key(audio_duration)
-            if api_key is None:
-                raise Exception("No available API keys after maximum retries")
+            
+            with api_key_lock:
+                api_key = get_available_key(audio_duration)
+                if api_key is None:
+                    raise Exception("No available API keys after maximum retries")
             
             client = Groq(api_key=api_key)
             
@@ -148,14 +156,14 @@ def process_audio(file_path):
         for i, chunk in enumerate(chunks):
             try:
                 audio_duration = len(chunk) / 1000
-                transcript = transcribe_chunk(chunk, i+1, audio_duration, temp_dir)
+                with file_lock:
+                    transcript = transcribe_chunk(chunk, i+1, audio_duration, temp_dir)
                 transcripts.append(transcript)
                 progress = (i + 1) / len(chunks)
                 st.progress(progress)
                 time.sleep(1)
             except Exception as e:
                 logger.error(f"Error processing chunk {i+1}: {str(e)}")
-                # Instead of raising immediately, we'll continue with the next chunk
                 transcripts.append(f"Error in chunk {i+1}: {str(e)}")
 
         errors = [t for t in transcripts if t.startswith("Error in chunk")]
@@ -200,24 +208,35 @@ st.title("Audio/Video Transcription App")
 input_method = st.radio("Choose input method:", ("URL", "File Upload", "YouTube URL"))
 
 if input_method == "URL":
-    url = st.text_input("Enter the URL of the audio or video file:")
-    if url:
+    urls = st.text_area("Enter the URLs of the audio or video files (one per line):")
+    if urls:
         if st.button("Transcribe"):
+            urls = urls.split('\n')
             with st.spinner("Downloading and transcribing..."):
-                file_path, temp_dir = download_file(url)
-                if file_path:
-                    try:
-                        transcription = process_audio(file_path)
-                        if transcription:
-                            st.success("Transcription complete!")
-                            st.text_area("Transcription:", value=transcription, height=300)
-                    except Exception as e:
-                        st.error(f"An error occurred during transcription: {str(e)}")
-                    finally:
-                        if temp_dir:
-                            cleanup_temp_files(temp_dir)
-                else:
-                    st.error("Failed to download the file. Please check the URL and try again.")
+                def process_url(url):
+                    file_path, temp_dir = download_file(url)
+                    if file_path:
+                        try:
+                            transcription = process_audio(file_path)
+                            if transcription:
+                                st.success(f"Transcription complete for {url}!")
+                                st.text_area(f"Transcription for {url}:", value=transcription, height=300)
+                        except Exception as e:
+                            st.error(f"An error occurred during transcription of {url}: {str(e)}")
+                        finally:
+                            if temp_dir:
+                                cleanup_temp_files(temp_dir)
+                    else:
+                        st.error(f"Failed to download the file from {url}. Please check the URL and try again.")
+
+                threads = []
+                for url in urls:
+                    thread = threading.Thread(target=process_url, args=(url,))
+                    threads.append(thread)
+                    thread.start()
+
+                for thread in threads:
+                    thread.join()
 elif input_method == "YouTube URL":
     youtube_url = st.text_input("Enter the YouTube URL of the video:")
     if youtube_url:
