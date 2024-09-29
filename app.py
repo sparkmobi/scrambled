@@ -95,8 +95,10 @@ def exponential_backoff(attempt, max_delay=60):
     time.sleep(delay)
 
 def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=3):
+    temp_file_path = None
     for attempt in range(max_retries):
         try:
+            # Create a new temporary file for each attempt
             with NamedTemporaryFile(dir=temp_dir, suffix='.mp3', delete=False) as temp_file:
                 temp_file_path = temp_file.name
                 chunk.export(temp_file_path, format="mp3", bitrate="32k")
@@ -128,8 +130,13 @@ def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=
             else:
                 raise
         finally:
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
+            # Delete the temporary file after each attempt
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.remove(temp_file_path)
+                    logger.info(f"Temporary file {temp_file_path} deleted")
+                except Exception as e:
+                    logger.error(f"Error deleting temporary file {temp_file_path}: {str(e)}")
 
 def process_audio(file_path):
     temp_dir = create_temp_dir()
@@ -153,10 +160,11 @@ def process_audio(file_path):
         logger.info(f"Audio split into {len(chunks)} chunks")
 
         transcripts = []
+        chunk_locks = [threading.Lock() for _ in range(len(chunks))]
         for i, chunk in enumerate(chunks):
             try:
                 audio_duration = len(chunk) / 1000
-                with file_lock:
+                with chunk_locks[i]:
                     transcript = transcribe_chunk(chunk, i+1, audio_duration, temp_dir)
                 transcripts.append(transcript)
                 progress = (i + 1) / len(chunks)
