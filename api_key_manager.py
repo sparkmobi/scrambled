@@ -88,7 +88,17 @@ def reset_counters():
     logger.info(f"Hour audio reset for {len(hour_reset.data)} keys")
     
     # Reset day counts and audio
-    day_reset = supabase.table("api_keys").update({"day_count": 0, "day_audio": 0})\
-        .lt("last_used", (now - timedelta(hours=12)).isoformat())\
+    today = now.date()
+    day_reset = supabase.table("api_keys").update({
+        "day_count": 0, 
+        "day_audio": 0,
+        "last_used": now.isoformat()  # Update last_used to current time
+    }).lt("last_used", today.isoformat())\
         .execute()
     logger.info(f"Day count and audio reset for {len(day_reset.data)} keys")
+
+    # Log all API keys after reset
+    all_keys = supabase.table("api_keys").select("*").execute()
+    logger.info("API keys after reset:")
+    for key in all_keys.data:
+        logger.info(f"Key ID: {key['id']}, hour_audio: {key['hour_audio']}, minute_count: {key['minute_count']}, day_count: {key['day_count']}, day_audio: {key['day_audio']}, last_used: {key['last_used']}")
