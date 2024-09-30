@@ -17,6 +17,8 @@ import shutil
 import random
 import threading
 from tempfile import NamedTemporaryFile
+import assemblyai as aai
+from io import BytesIO
 
 # Add the current directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -38,6 +40,9 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Add this at the beginning of the file
 file_lock = threading.Lock()
 api_key_lock = threading.Lock()
+
+# Add this to your environment variables or directly in the code (be cautious with API keys)
+ASSEMBLYAI_API_KEY = "7c5d242d606542268916c235daa26031"
 
 def create_temp_dir():
     return tempfile.mkdtemp(dir=SCRIPT_DIR)
@@ -99,7 +104,7 @@ def exponential_backoff(attempt, max_delay=60):
     delay = min(2 ** attempt + random.uniform(0, 1), max_delay)
     time.sleep(delay)
 
-def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=3):
+def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=10):
     temp_file_path = None
     for attempt in range(max_retries):
         try:
@@ -110,24 +115,42 @@ def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=
             
             logger.info(f"Attempting to transcribe chunk {chunk_number} (Attempt {attempt + 1}/{max_retries})")
             
-            with api_key_lock:
-                api_key = get_available_key(audio_duration)
-                if api_key is None:
-                    raise Exception("No available API keys after maximum retries")
-            
-            client = Groq(api_key=api_key)
-            
-            with open(temp_file_path, "rb") as audio_file:
-                response = client.audio.transcriptions.create(
-                    file=audio_file,
-                    model="whisper-large-v3",
-                    prompt="",
-                    temperature=0.0,
-                    response_format="text"
-                )
+            if attempt < 6:  # Use Groq for the first 6 attempts
+                with api_key_lock:
+                    api_key = get_available_key(audio_duration)
+                    if api_key is None:
+                        raise Exception("No available Groq API keys")
+                
+                client = Groq(api_key=api_key)
+                
+                with open(temp_file_path, "rb") as audio_file:
+                    response = client.audio.transcriptions.create(
+                        file=audio_file,
+                        model="whisper-large-v3",
+                        prompt="",
+                        temperature=0.0,
+                        response_format="text"
+                    )
+                
+                transcript = str(response).strip()
+            else:  # Switch to AssemblyAI after 6 attempts
+                logger.info(f"Switching to AssemblyAI for chunk {chunk_number}")
+                aai.settings.api_key = ASSEMBLYAI_API_KEY
+                transcriber = aai.Transcriber()
+                
+                with open(temp_file_path, "rb") as audio_file:
+                    audio_bytes = audio_file.read()
+                
+                config = aai.TranscriptionConfig(speaker_labels=True)
+                transcript = transcriber.transcribe(audio_bytes, config)
+                
+                if transcript.status == aai.TranscriptStatus.error:
+                    raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
+                
+                transcript = transcript.text
             
             logger.info(f"Chunk {chunk_number} processed successfully")
-            return str(response).strip()
+            return transcript
         except Exception as e:
             logger.error(f"Error in transcribe_chunk {chunk_number} (Attempt {attempt + 1}/{max_retries}): {str(e)}")
             if attempt < max_retries - 1:
