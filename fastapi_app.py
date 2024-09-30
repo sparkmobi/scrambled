@@ -19,6 +19,9 @@ import threading
 import assemblyai as aai
 from helper import download_youtube_audio
 import asyncio
+import uvicorn
+import signal
+import sys
 
 # Add the current directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -285,6 +288,14 @@ async def upload_file(file: UploadFile = File(...)):
     finally:
         cleanup_temp_files(temp_dir)
 
+def signal_handler(sig, frame):
+    print("Received shutdown signal. Stopping server...")
+    sys.exit(0)
+
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    config = uvicorn.Config(app=app, host="0.0.0.0", port=8000)
+    server = uvicorn.Server(config)
+    server.run()
