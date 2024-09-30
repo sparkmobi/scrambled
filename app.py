@@ -104,7 +104,7 @@ def exponential_backoff(attempt, max_delay=60):
     delay = min(2 ** attempt + random.uniform(0, 1), max_delay)
     time.sleep(delay)
 
-def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=10):
+def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=5):
     temp_file_path = None
     for attempt in range(max_retries):
         try:
@@ -115,25 +115,10 @@ def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=
             
             logger.info(f"Attempting to transcribe chunk {chunk_number} (Attempt {attempt + 1}/{max_retries})")
             
-            if attempt < 6:  # Use Groq for the first 6 attempts
-                with api_key_lock:
-                    api_key = get_available_key(audio_duration)
-                    if api_key is None:
-                        raise Exception("No available Groq API keys")
-                
-                client = Groq(api_key=api_key)
-                
-                with open(temp_file_path, "rb") as audio_file:
-                    response = client.audio.transcriptions.create(
-                        file=audio_file,
-                        model="whisper-large-v3",
-                        prompt="",
-                        temperature=0.0,
-                        response_format="text"
-                    )
-                
-                transcript = str(response).strip()
-            else:  # Switch to AssemblyAI after 6 attempts
+            with api_key_lock:
+                api_key = get_available_key(audio_duration)
+            
+            if api_key == "use_assemblyai":
                 logger.info(f"Switching to AssemblyAI for chunk {chunk_number}")
                 aai.settings.api_key = ASSEMBLYAI_API_KEY
                 transcriber = aai.Transcriber()
@@ -148,6 +133,21 @@ def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=
                     raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
                 
                 transcript = transcript.text
+            elif api_key is None:
+                raise Exception("No available API keys")
+            else:
+                client = Groq(api_key=api_key)
+                
+                with open(temp_file_path, "rb") as audio_file:
+                    response = client.audio.transcriptions.create(
+                        file=audio_file,
+                        model="whisper-large-v3",
+                        prompt="",
+                        temperature=0.0,
+                        response_format="text"
+                    )
+                
+                transcript = str(response).strip()
             
             logger.info(f"Chunk {chunk_number} processed successfully")
             return transcript
