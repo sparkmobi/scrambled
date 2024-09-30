@@ -129,7 +129,7 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_re
                 with open(temp_file_path, "rb") as audio_file:
                     audio_bytes = audio_file.read()
                 
-                config = aai.TranscriptionConfig(speaker_labels=True)
+                config = aai.TranscriptionConfig(language_detection=True)
                 # Use run_in_executor for synchronous operations
                 transcript = await asyncio.to_thread(transcriber.transcribe, audio_bytes, config)
                 
