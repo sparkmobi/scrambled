@@ -8,7 +8,7 @@ from typing import List
 import requests
 from pydub import AudioSegment
 from dotenv import load_dotenv
-from groq import Groq
+from groq import Groq, AsyncGroq
 import ffmpeg
 from api_key_manager import get_available_key, reset_counters, logger as api_key_logger
 import time
@@ -18,6 +18,7 @@ import random
 import threading
 import assemblyai as aai
 from helper import download_youtube_audio
+import asyncio
 
 # Add the current directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -102,10 +103,9 @@ def split_audio(audio_file, max_duration=1750):
     return chunks
 
 def exponential_backoff(attempt, max_delay=60):
-    delay = min(2 ** attempt + random.uniform(0, 1), max_delay)
-    time.sleep(delay)
+    return min(2 ** attempt + random.uniform(0, 1), max_delay)
 
-def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=5):
+async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=5):
     temp_file_path = None
     for attempt in range(max_retries):
         try:
@@ -127,7 +127,7 @@ def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=
                     audio_bytes = audio_file.read()
                 
                 config = aai.TranscriptionConfig(speaker_labels=True)
-                transcript = transcriber.transcribe(audio_bytes, config)
+                transcript = await transcriber.transcribe(audio_bytes, config)
                 
                 if transcript.status == aai.TranscriptStatus.error:
                     raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
@@ -136,10 +136,10 @@ def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=
             elif api_key is None:
                 raise Exception("No available API keys")
             else:
-                client = Groq(api_key=api_key)
+                client = AsyncGroq(api_key=api_key)
                 
                 with open(temp_file_path, "rb") as audio_file:
-                    response = client.audio.transcriptions.create(
+                    response = await client.audio.transcriptions.create(
                         file=audio_file,
                         model="whisper-large-v3",
                         prompt="",
@@ -154,7 +154,7 @@ def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=
         except Exception as e:
             logger.error(f"Error in transcribe_chunk {chunk_number} (Attempt {attempt + 1}/{max_retries}): {str(e)}")
             if attempt < max_retries - 1:
-                exponential_backoff(attempt)
+                await asyncio.sleep(exponential_backoff(attempt))
             else:
                 raise
         finally:
@@ -184,21 +184,20 @@ async def process_audio(file_path):
         logger.info(f"Audio split into {len(chunks)} chunks")
 
         transcripts = []
+        tasks = []
         for i, chunk in enumerate(chunks):
-            try:
-                audio_duration = len(chunk) / 1000
-                transcript = await transcribe_chunk(chunk, i+1, audio_duration, temp_dir)
-                transcripts.append(transcript)
-            except Exception as e:
-                logger.error(f"Error processing chunk {i+1}: {str(e)}")
-                transcripts.append(f"Error in chunk {i+1}: {str(e)}")
+            audio_duration = len(chunk) / 1000
+            task = asyncio.create_task(transcribe_chunk(chunk, i+1, audio_duration, temp_dir))
+            tasks.append(task)
 
-        errors = [t for t in transcripts if t.startswith("Error in chunk")]
+        transcripts = await asyncio.gather(*tasks)
+
+        errors = [t for t in transcripts if isinstance(t, str) and t.startswith("Error in chunk")]
         if errors:
             error_msgs = "\n".join(errors)
             raise Exception(f"Errors occurred during transcription:\n{error_msgs}")
 
-        full_transcript = " ".join(t for t in transcripts if not t.startswith("Error in chunk"))
+        full_transcript = " ".join(t for t in transcripts if not (isinstance(t, str) and t.startswith("Error in chunk")))
         logger.info("All chunks processed and combined")
         logger.info(f"Full transcript (first 100 characters): {full_transcript[:100]}...")
 
@@ -245,7 +244,7 @@ async def transcribe(request: TranscriptionRequest, background_tasks: Background
             return JSONResponse(content={"transcriptions": transcriptions})
         
         elif request.youtube_url:
-            file_path = download_youtube_audio(SCRIPT_DIR, request.youtube_url)
+            file_path = await asyncio.to_thread(download_youtube_audio, SCRIPT_DIR, request.youtube_url)
             if file_path:
                 try:
                     transcription = await process_audio(file_path)
