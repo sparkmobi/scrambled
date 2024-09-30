@@ -19,7 +19,7 @@ DAY_AUDIO_LIMIT = 28800  # seconds
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def get_available_key(audio_duration, max_retries=60, retry_delay=60):
+def get_available_key(audio_duration, max_retries=5, retry_delay=60):
     for attempt in range(max_retries):
         now = datetime.now()
         
@@ -66,10 +66,13 @@ def get_available_key(audio_duration, max_retries=60, retry_delay=60):
             
             return key["api_key"]
         
-        logger.warning(f"No available API keys. Retrying in {retry_delay} seconds. Attempt {attempt + 1}/{max_retries}")
-        time.sleep(retry_delay)
+        if attempt < max_retries - 1:
+            logger.warning(f"No available API keys. Retrying in {retry_delay} seconds. Attempt {attempt + 1}/{max_retries}")
+            time.sleep(retry_delay)
+        else:
+            logger.warning("Max retries reached. Switching to AssemblyAI.")
+            return "use_assemblyai"
     
-    logger.error("Max retries reached. No available API keys.")
     return None
 
 def reset_counters():
