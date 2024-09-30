@@ -230,17 +230,23 @@ async def transcribe(request: TranscriptionRequest, background_tasks: Background
     try:
         if request.urls:
             transcriptions = []
+            all_failed = True
             for url in request.urls:
                 file_path, temp_dir = await download_file(url)
                 if file_path:
                     try:
                         transcription = await process_audio(file_path)
                         transcriptions.append({"url": url, "transcription": transcription})
+                        all_failed = False
                     finally:
                         if temp_dir:
                             background_tasks.add_task(cleanup_temp_files, temp_dir)
                 else:
                     transcriptions.append({"url": url, "error": "Failed to download the file"})
+            
+            if all_failed:
+                raise HTTPException(status_code=400, detail="Failed to download all provided files")
+            
             return JSONResponse(content={"transcriptions": transcriptions})
         
         elif request.youtube_url:
