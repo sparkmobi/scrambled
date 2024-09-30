@@ -229,6 +229,38 @@ async def download_file(url):
         cleanup_temp_files(temp_dir)
         return None, None
 
+async def download_youtube_audio(youtube_url):
+    url = "https://youtube-mp3-downloader2.p.rapidapi.com/ytmp3/ytmp3/long_video.php"
+    
+    querystring = {"url": youtube_url}
+    
+    headers = {
+        "x-rapidapi-key": "08624f09acmsh93345251cb25c60p12d48djsn5ceebe4ca205",
+        "x-rapidapi-host": "youtube-mp3-downloader2.p.rapidapi.com"
+    }
+    
+    max_retries = 5
+    retry_delay = 5  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            response = await asyncio.to_thread(requests.get, url, headers=headers, params=querystring)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data['status'] == 'finished':
+                return data['dlink']
+            elif data['status'] == 'processing':
+                await asyncio.sleep(retry_delay)
+            else:
+                raise HTTPException(status_code=500, detail=f"YouTube download failed: {data['status']}")
+        except requests.RequestException as e:
+            if attempt == max_retries - 1:
+                raise HTTPException(status_code=500, detail=f"Failed to download YouTube audio: {str(e)}")
+            await asyncio.sleep(retry_delay)
+    
+    raise HTTPException(status_code=500, detail="Max retries reached for YouTube download")
+
 @app.post("/transcribe")
 async def transcribe(request: TranscriptionRequest, background_tasks: BackgroundTasks):
     try:
@@ -254,15 +286,20 @@ async def transcribe(request: TranscriptionRequest, background_tasks: Background
             return JSONResponse(content={"transcriptions": transcriptions})
         
         elif request.youtube_url:
-            file_path = await asyncio.to_thread(download_youtube_audio, SCRIPT_DIR, request.youtube_url)
-            if file_path:
-                try:
-                    transcription = await process_audio(file_path)
-                    return JSONResponse(content={"youtube_url": request.youtube_url, "transcription": transcription})
-                finally:
-                    background_tasks.add_task(os.remove, file_path)
+            audio_url = await download_youtube_audio(request.youtube_url)
+            if audio_url:
+                file_path, temp_dir = await download_file(audio_url)
+                if file_path:
+                    try:
+                        transcription = await process_audio(file_path)
+                        return JSONResponse(content={"youtube_url": request.youtube_url, "transcription": transcription})
+                    finally:
+                        if temp_dir:
+                            background_tasks.add_task(cleanup_temp_files, temp_dir)
+                else:
+                    raise HTTPException(status_code=400, detail="Failed to download the audio file from YouTube")
             else:
-                raise HTTPException(status_code=400, detail="Failed to download the YouTube video")
+                raise HTTPException(status_code=400, detail="Failed to get download link for YouTube video")
         
         else:
             raise HTTPException(status_code=400, detail="No URLs or YouTube URL provided")
