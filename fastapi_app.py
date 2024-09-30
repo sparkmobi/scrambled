@@ -127,7 +127,8 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_re
                     audio_bytes = audio_file.read()
                 
                 config = aai.TranscriptionConfig(speaker_labels=True)
-                transcript = await transcriber.transcribe(audio_bytes, config)
+                # Use run_in_executor for synchronous operations
+                transcript = await asyncio.to_thread(transcriber.transcribe, audio_bytes, config)
                 
                 if transcript.status == aai.TranscriptStatus.error:
                     raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
