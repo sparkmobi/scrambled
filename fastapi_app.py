@@ -22,6 +22,8 @@ import asyncio
 import uvicorn
 import signal
 import sys
+from uuid import uuid4
+from collections import defaultdict
 
 # Add the current directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -52,6 +54,10 @@ app = FastAPI()
 class TranscriptionRequest(BaseModel):
     urls: List[str] = []
     youtube_url: str = None
+
+# Add this near the top of the file, after other global variables
+task_results = {}
+task_queue = asyncio.Queue()
 
 def create_temp_dir():
     return tempfile.mkdtemp(dir=SCRIPT_DIR)
@@ -261,8 +267,54 @@ async def download_youtube_audio(youtube_url):
     
     raise HTTPException(status_code=500, detail="Max retries reached for YouTube download")
 
+# Add this function to handle background tasks
+async def process_task(task_id, task_type, data):
+    try:
+        if task_type == "transcribe":
+            result = await transcribe_task(data)
+        elif task_type == "upload":
+            result = await upload_task(data)
+        else:
+            raise ValueError(f"Unknown task type: {task_type}")
+        
+        task_results[task_id] = {"status": "completed", "result": result}
+    except Exception as e:
+        task_results[task_id] = {"status": "failed", "error": str(e)}
+
+# Modify the transcribe function
 @app.post("/transcribe")
 async def transcribe(request: TranscriptionRequest, background_tasks: BackgroundTasks):
+    task_id = str(uuid4())
+    task_results[task_id] = {"status": "processing"}
+    background_tasks.add_task(process_task, task_id, "transcribe", request)
+    return {"task_id": task_id}
+
+# Modify the upload_file function
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...), background_tasks: BackgroundTasks):
+    task_id = str(uuid4())
+    task_results[task_id] = {"status": "processing"}
+    background_tasks.add_task(process_task, task_id, "upload", file)
+    return {"task_id": task_id}
+
+# Add a new endpoint to check task results
+@app.get("/task_result/{task_id}")
+async def get_task_result(task_id: str):
+    if task_id not in task_results:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    result = task_results[task_id]
+    if result["status"] == "completed":
+        # Optionally, remove the result from memory after it's been retrieved
+        # del task_results[task_id]
+        return result
+    elif result["status"] == "failed":
+        raise HTTPException(status_code=500, detail=result["error"])
+    else:
+        return {"status": "processing"}
+
+# Implement the transcribe_task function
+async def transcribe_task(request: TranscriptionRequest):
     try:
         if request.urls:
             transcriptions = []
@@ -276,14 +328,14 @@ async def transcribe(request: TranscriptionRequest, background_tasks: Background
                         all_failed = False
                     finally:
                         if temp_dir:
-                            background_tasks.add_task(cleanup_temp_files, temp_dir)
+                            await asyncio.to_thread(cleanup_temp_files, temp_dir)
                 else:
                     transcriptions.append({"url": url, "error": "Failed to download the file"})
             
             if all_failed:
-                raise HTTPException(status_code=400, detail="Failed to download all provided files")
+                raise Exception("Failed to download all provided files")
             
-            return JSONResponse(content={"transcriptions": transcriptions})
+            return {"transcriptions": transcriptions}
         
         elif request.youtube_url:
             audio_url = await download_youtube_audio(request.youtube_url)
@@ -292,24 +344,24 @@ async def transcribe(request: TranscriptionRequest, background_tasks: Background
                 if file_path:
                     try:
                         transcription = await process_audio(file_path)
-                        return JSONResponse(content={"youtube_url": request.youtube_url, "transcription": transcription})
+                        return {"youtube_url": request.youtube_url, "transcription": transcription}
                     finally:
                         if temp_dir:
-                            background_tasks.add_task(cleanup_temp_files, temp_dir)
+                            await asyncio.to_thread(cleanup_temp_files, temp_dir)
                 else:
-                    raise HTTPException(status_code=400, detail="Failed to download the audio file from YouTube")
+                    raise Exception("Failed to download the audio file from YouTube")
             else:
-                raise HTTPException(status_code=400, detail="Failed to get download link for YouTube video")
+                raise Exception("Failed to get download link for YouTube video")
         
         else:
-            raise HTTPException(status_code=400, detail="No URLs or YouTube URL provided")
+            raise Exception("No URLs or YouTube URL provided")
     
     except Exception as e:
         logger.error(f"An error occurred during transcription: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise
 
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+# Implement the upload_task function
+async def upload_task(file: UploadFile):
     temp_dir = create_temp_dir()
     try:
         file_extension = os.path.splitext(file.filename)[1]
@@ -318,12 +370,12 @@ async def upload_file(file: UploadFile = File(...)):
             content = await file.read()
             temp_file.write(content)
         transcription = await process_audio(temp_file_path)
-        return JSONResponse(content={"filename": file.filename, "transcription": transcription})
+        return {"filename": file.filename, "transcription": transcription}
     except Exception as e:
         logger.error(f"An error occurred during transcription: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise
     finally:
-        cleanup_temp_files(temp_dir)
+        await asyncio.to_thread(cleanup_temp_files, temp_dir)
 
 def signal_handler(sig, frame):
     print("Received shutdown signal. Stopping server...")
