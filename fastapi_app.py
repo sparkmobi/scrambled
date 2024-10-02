@@ -120,29 +120,17 @@ def split_audio(audio_file, max_duration=1750):
 def exponential_backoff(attempt, max_delay=60):
     return min(2 ** attempt + random.uniform(0, 1), max_delay)
 
-# Add this function to detect the language
+# Initialize the AssemblyAI transcriber
+transcriber = aai.Transcriber()
+
 async def detect_audio_language(file_path):
     try:
-        # Configure AssemblyAI
-        aai.settings.api_key = ASSEMBLYAI_API_KEY
-        
-        # Load the first 30 seconds of the audio file
-        audio = AudioSegment.from_file(file_path)
-        sample = audio[:30000]  # 30 seconds
-        
-        # Save the sample to a temporary file
-        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
-            sample.export(temp_file.name, format="mp3")
-            
-            # Use AssemblyAI to detect the language
-            config = aai.TranscriptionConfig(language_detection=True)
-            transcriber = aai.Transcriber()
-            transcript = transcriber.transcribe(temp_file.name, config=config)
-        
-        # Clean up the temporary file
-        os.unlink(temp_file.name)
-        
-        # Get the detected language
+        config = aai.TranscriptionConfig(
+            audio_end_at=60000,  # first 60 seconds (in milliseconds)
+            language_detection=True,
+            speech_model=aai.SpeechModel.nano,
+        )
+        transcript = await asyncio.to_thread(transcriber.transcribe, file_path, config=config)
         detected_language = transcript.detected_language_code
         logger.info(f"Detected language code: {detected_language}")
         
@@ -159,7 +147,7 @@ async def detect_audio_language(file_path):
         # Default to English if detection fails
         return 'en'
 
-# Modify the process_audio function to include language detection
+# Update the process_audio function to use the new detect_audio_language
 async def process_audio(file_path):
     temp_dir = create_temp_dir()
     try:
