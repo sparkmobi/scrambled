@@ -1,6 +1,7 @@
 from celery import Celery
 from fastapi_app import process_audio, download_file, download_youtube_audio, cleanup_temp_files
 import asyncio
+import logging
 
 celery_app = Celery('tasks', broker='redis://localhost:6379/0', backend='redis://localhost:6379/0')
 
@@ -15,9 +16,12 @@ def transcribe_youtube(youtube_url):
     return loop.run_until_complete(_transcribe_youtube(youtube_url))
 
 @celery_app.task(name='tasks.transcribe_file')
-def transcribe_file(file_path, filename):
+def transcribe_file(file_path, filename, temp_dir):
     loop = asyncio.get_event_loop()
-    return loop.run_until_complete(_transcribe_file(file_path, filename))
+    try:
+        return loop.run_until_complete(_transcribe_file(file_path, filename))
+    finally:
+        cleanup_temp_files(temp_dir)
 
 async def _transcribe_urls(urls):
     transcriptions = []
@@ -54,8 +58,12 @@ async def _transcribe_file(file_path, filename):
     try:
         transcription = await process_audio(file_path)
         return {"filename": filename, "transcription": transcription}
-    finally:
-        cleanup_temp_files(file_path)
+    except FileNotFoundError:
+        logging.error(f"File not found: {file_path}")
+        return {"filename": filename, "error": "File not found"}
+    except Exception as e:
+        logging.error(f"Error processing file {filename}: {str(e)}")
+        return {"filename": filename, "error": str(e)}
 
 if __name__ == '__main__':
     celery_app.start()
