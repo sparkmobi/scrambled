@@ -69,6 +69,8 @@ def cleanup_temp_files(path):
         elif os.path.isdir(path):
             shutil.rmtree(path)
             logger.info(f"Cleaned up temporary directory: {path}")
+        else:
+            logger.warning(f"Path does not exist or is neither file nor directory: {path}")
     except Exception as e:
         logger.error(f"Error cleaning up temporary path {path}: {str(e)}")
 
