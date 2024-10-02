@@ -22,8 +22,8 @@ import asyncio
 import uvicorn
 import signal
 import sys
-from uuid import uuid4
-from collections import defaultdict
+from celery import Celery
+from celery.result import AsyncResult
 
 # Add the current directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -51,13 +51,12 @@ ASSEMBLYAI_API_KEY = "7c5d242d606542268916c235daa26031"
 
 app = FastAPI()
 
+# Create Celery app
+celery_app = Celery('tasks', broker='redis://localhost:6379/0', backend='redis://localhost:6379/0')
+
 class TranscriptionRequest(BaseModel):
     urls: List[str] = []
     youtube_url: str = None
-
-# Add this near the top of the file, after other global variables
-task_results = {}
-task_queue = asyncio.Queue()
 
 def create_temp_dir():
     return tempfile.mkdtemp(dir=SCRIPT_DIR)
@@ -114,8 +113,9 @@ def split_audio(audio_file, max_duration=1750):
 def exponential_backoff(attempt, max_delay=60):
     return min(2 ** attempt + random.uniform(0, 1), max_delay)
 
-async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_retries=5):
+async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir):
     temp_file_path = None
+    max_retries = 5
     for attempt in range(max_retries):
         try:
             with tempfile.NamedTemporaryFile(dir=temp_dir, suffix='.mp3', delete=False) as temp_file:
@@ -127,40 +127,56 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, max_re
             with api_key_lock:
                 api_key = get_available_key(audio_duration)
             
-            if api_key == "use_assemblyai":
-                logger.info(f"Switching to AssemblyAI for chunk {chunk_number}")
+            if api_key == "use_assemblyai" or attempt == max_retries - 1:
+                logger.info(f"Using AssemblyAI for chunk {chunk_number}")
                 aai.settings.api_key = ASSEMBLYAI_API_KEY
+                
                 transcriber = aai.Transcriber()
+                transcript = await asyncio.to_thread(transcriber.transcribe, temp_file_path)
                 
-                with open(temp_file_path, "rb") as audio_file:
-                    audio_bytes = audio_file.read()
-                
-                config = aai.TranscriptionConfig(language_detection=True)
-                # Use run_in_executor for synchronous operations
-                transcript = await asyncio.to_thread(transcriber.transcribe, audio_bytes, config)
-                
-                if transcript.status == aai.TranscriptStatus.error:
+                if transcript.status == "error":
                     raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
                 
-                transcript = transcript.text
+                transcript_text = transcript.text
             elif api_key is None:
                 raise Exception("No available API keys")
             else:
-                client = AsyncGroq(api_key=api_key)
-                
-                with open(temp_file_path, "rb") as audio_file:
-                    response = await client.audio.transcriptions.create(
-                        file=audio_file,
-                        model="whisper-large-v3",
-                        prompt="",
-                        temperature=0.0,
-                        response_format="text"
-                    )
-                
-                transcript = str(response).strip()
+                try:
+                    client = AsyncGroq(api_key=api_key)
+                    
+                    with open(temp_file_path, "rb") as audio_file:
+                        response = await client.audio.transcriptions.create(
+                            file=audio_file,
+                            model="whisper-large-v3",
+                            prompt="",
+                            temperature=0.0,
+                            response_format="text"
+                        )
+                    
+                    logger.info(f"Groq API response type: {type(response)}")
+                    logger.info(f"Groq API response: {response}")
+                    
+                    if isinstance(response, str):
+                        transcript_text = response.strip()
+                    elif isinstance(response, dict) and 'text' in response:
+                        transcript_text = response['text'].strip()
+                    elif hasattr(response, 'text'):
+                        transcript_text = response.text.strip()
+                    else:
+                        transcript_text = str(response).strip()
+                    
+                except Exception as e:
+                    logger.error(f"Error with Groq API: {str(e)}")
+                    logger.error(f"Error type: {type(e)}")
+                    logger.error(f"Error args: {e.args}")
+                    if attempt < max_retries - 1:
+                        continue
+                    else:
+                        raise
             
+            logger.info(f"Transcribed text: {transcript_text[:100]}...")  # Log first 100 characters
             logger.info(f"Chunk {chunk_number} processed successfully")
-            return transcript
+            return transcript_text
         except Exception as e:
             logger.error(f"Error in transcribe_chunk {chunk_number} (Attempt {attempt + 1}/{max_retries}): {str(e)}")
             if attempt < max_retries - 1:
@@ -267,101 +283,23 @@ async def download_youtube_audio(youtube_url):
     
     raise HTTPException(status_code=500, detail="Max retries reached for YouTube download")
 
-# Add this function to handle background tasks
-async def process_task(task_id, task_type, data):
-    try:
-        if task_type == "transcribe":
-            result = await transcribe_task(data)
-        elif task_type == "upload":
-            result = await upload_task(data)
-        else:
-            raise ValueError(f"Unknown task type: {task_type}")
-        
-        task_results[task_id] = {"status": "completed", "result": result}
-    except Exception as e:
-        task_results[task_id] = {"status": "failed", "error": str(e)}
-
-# Modify the transcribe function
 @app.post("/transcribe")
-async def transcribe(request: TranscriptionRequest, background_tasks: BackgroundTasks):
-    task_id = str(uuid4())
-    task_results[task_id] = {"status": "processing"}
-    background_tasks.add_task(process_task, task_id, "transcribe", request)
-    return {"task_id": task_id}
-
-# Modify the upload_file function
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...), *, background_tasks: BackgroundTasks):
-    task_id = str(uuid4())
-    task_results[task_id] = {"status": "processing"}
-    background_tasks.add_task(process_task, task_id, "upload", file)
-    return {"task_id": task_id}
-
-# Add a new endpoint to check task results
-@app.get("/task_result/{task_id}")
-async def get_task_result(task_id: str):
-    if task_id not in task_results:
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    result = task_results[task_id]
-    if result["status"] == "completed":
-        # Optionally, remove the result from memory after it's been retrieved
-        # del task_results[task_id]
-        return result
-    elif result["status"] == "failed":
-        raise HTTPException(status_code=500, detail=result["error"])
-    else:
-        return {"status": "processing"}
-
-# Implement the transcribe_task function
-async def transcribe_task(request: TranscriptionRequest):
+async def transcribe(request: TranscriptionRequest):
     try:
         if request.urls:
-            transcriptions = []
-            all_failed = True
-            for url in request.urls:
-                file_path, temp_dir = await download_file(url)
-                if file_path:
-                    try:
-                        transcription = await process_audio(file_path)
-                        transcriptions.append({"url": url, "transcription": transcription})
-                        all_failed = False
-                    finally:
-                        if temp_dir:
-                            await asyncio.to_thread(cleanup_temp_files, temp_dir)
-                else:
-                    transcriptions.append({"url": url, "error": "Failed to download the file"})
-            
-            if all_failed:
-                raise Exception("Failed to download all provided files")
-            
-            return {"transcriptions": transcriptions}
-        
+            task = celery_app.send_task('tasks.transcribe_urls', args=[request.urls])
+            return JSONResponse(content={"task_id": task.id})
         elif request.youtube_url:
-            audio_url = await download_youtube_audio(request.youtube_url)
-            if audio_url:
-                file_path, temp_dir = await download_file(audio_url)
-                if file_path:
-                    try:
-                        transcription = await process_audio(file_path)
-                        return {"youtube_url": request.youtube_url, "transcription": transcription}
-                    finally:
-                        if temp_dir:
-                            await asyncio.to_thread(cleanup_temp_files, temp_dir)
-                else:
-                    raise Exception("Failed to download the audio file from YouTube")
-            else:
-                raise Exception("Failed to get download link for YouTube video")
-        
+            task = celery_app.send_task('tasks.transcribe_youtube', args=[request.youtube_url])
+            return JSONResponse(content={"task_id": task.id})
         else:
-            raise Exception("No URLs or YouTube URL provided")
-    
+            raise HTTPException(status_code=400, detail="No URLs or YouTube URL provided")
     except Exception as e:
         logger.error(f"An error occurred during transcription: {str(e)}")
-        raise
+        raise HTTPException(status_code=500, detail=str(e))
 
-# Implement the upload_task function
-async def upload_task(file: UploadFile):
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
     temp_dir = create_temp_dir()
     try:
         file_extension = os.path.splitext(file.filename)[1]
@@ -369,13 +307,24 @@ async def upload_task(file: UploadFile):
         with open(temp_file_path, "wb") as temp_file:
             content = await file.read()
             temp_file.write(content)
-        transcription = await process_audio(temp_file_path)
-        return {"filename": file.filename, "transcription": transcription}
+        task = celery_app.send_task('tasks.transcribe_file', args=[temp_file_path, file.filename])
+        return JSONResponse(content={"task_id": task.id})
     except Exception as e:
-        logger.error(f"An error occurred during transcription: {str(e)}")
-        raise
+        logger.error(f"An error occurred during file upload: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
-        await asyncio.to_thread(cleanup_temp_files, temp_dir)
+        cleanup_temp_files(temp_dir)
+
+@app.get("/task/{task_id}")
+async def get_task_status(task_id: str):
+    task_result = AsyncResult(task_id, app=celery_app)
+    if task_result.ready():
+        if task_result.successful():
+            return JSONResponse(content={"status": "completed", "result": task_result.result})
+        else:
+            return JSONResponse(content={"status": "failed", "error": str(task_result.result)})
+    else:
+        return JSONResponse(content={"status": "processing"})
 
 def signal_handler(sig, frame):
     print("Received shutdown signal. Stopping server...")
