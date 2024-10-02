@@ -134,7 +134,7 @@ async def detect_audio_language(file_path):
         transcript = await asyncio.to_thread(transcriber.transcribe, file_path, config=config)
         
         # Access the detected language from the transcript object
-        detected_language = transcript.detected_language
+        detected_language = transcript.json_response["language_code"]
         logger.info(f"Detected language: {detected_language}")
         
         # Map the detected language to 'en' or 'ar'
