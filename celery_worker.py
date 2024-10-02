@@ -24,7 +24,7 @@ def transcribe_file(file_path, filename, detect_lang=False):
     try:
         return loop.run_until_complete(_transcribe_file(file_path, filename, detect_lang))
     finally:
-        cleanup_temp_files(file_path)  # Clean up the file, not the directory
+        cleanup_temp_files(file_path)
 
 async def _transcribe_urls(urls, detect_lang):
     transcriptions = []
