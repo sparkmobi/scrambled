@@ -2,6 +2,8 @@ from celery import Celery
 from fastapi_app import process_audio, download_file, download_youtube_audio, cleanup_temp_files
 import asyncio
 import logging
+import os
+import shutil
 
 celery_app = Celery('tasks', broker='redis://localhost:6379/0', backend='redis://localhost:6379/0')
 
@@ -21,7 +23,7 @@ def transcribe_file(file_path, filename):
     try:
         return loop.run_until_complete(_transcribe_file(file_path, filename))
     finally:
-        cleanup_temp_files(os.path.dirname(file_path))
+        cleanup_temp_files(file_path)  # Clean up the file, not the directory
 
 async def _transcribe_urls(urls):
     transcriptions = []
@@ -64,6 +66,19 @@ async def _transcribe_file(file_path, filename):
     except Exception as e:
         logging.error(f"Error processing file {filename}: {str(e)}")
         return {"filename": filename, "error": str(e)}
+
+def cleanup_temp_files(path):
+    try:
+        if os.path.isfile(path):
+            os.remove(path)
+            logging.info(f"Cleaned up temporary file: {path}")
+        elif os.path.isdir(path):
+            shutil.rmtree(path)
+            logging.info(f"Cleaned up temporary directory: {path}")
+        else:
+            logging.warning(f"Path does not exist or is neither file nor directory: {path}")
+    except Exception as e:
+        logging.error(f"Error cleaning up temporary path {path}: {str(e)}")
 
 if __name__ == '__main__':
     celery_app.start()
