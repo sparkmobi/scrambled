@@ -53,6 +53,7 @@ app = FastAPI()
 
 # Create Celery app
 celery_app = Celery('tasks', broker='redis://localhost:6379/0', backend='redis://localhost:6379/0')
+celery_app.conf.broker_connection_retry_on_startup = True
 
 class TranscriptionRequest(BaseModel):
     urls: List[str] = []
