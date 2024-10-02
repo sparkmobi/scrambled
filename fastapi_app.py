@@ -143,9 +143,17 @@ async def detect_audio_language(file_path):
         os.unlink(temp_file.name)
         
         # Get the detected language
-        detected_language = transcript.language_code
+        detected_language = transcript.detected_language_code
+        logger.info(f"Detected language code: {detected_language}")
         
-        return 'en' if detected_language == 'en' else 'ar'
+        # Map the detected language to 'en' or 'ar'
+        if detected_language == 'en':
+            return 'en'
+        elif detected_language in ['ar', 'arb']:  # 'arb' is Modern Standard Arabic
+            return 'ar'
+        else:
+            logger.warning(f"Unsupported language detected: {detected_language}. Defaulting to English.")
+            return 'en'
     except Exception as e:
         logger.error(f"Error detecting audio language: {str(e)}")
         # Default to English if detection fails
