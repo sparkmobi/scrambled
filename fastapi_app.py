@@ -121,6 +121,7 @@ def exponential_backoff(attempt, max_delay=60):
     return min(2 ** attempt + random.uniform(0, 1), max_delay)
 
 # Initialize the AssemblyAI transcriber
+aai.settings.api_key = ASSEMBLYAI_API_KEY
 transcriber = aai.Transcriber()
 
 async def detect_audio_language(file_path):
