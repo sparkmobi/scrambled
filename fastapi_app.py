@@ -132,13 +132,15 @@ async def detect_audio_language(file_path):
             speech_model=aai.SpeechModel.nano,
         )
         transcript = await asyncio.to_thread(transcriber.transcribe, file_path, config=config)
-        detected_language = transcript.language_code
-        logger.info(f"Detected language code: {detected_language}")
+        
+        # Access the detected language from the transcript object
+        detected_language = transcript.detected_language
+        logger.info(f"Detected language: {detected_language}")
         
         # Map the detected language to 'en' or 'ar'
-        if detected_language == 'en' or 'en' in detected_language:
+        if detected_language == 'en' or detected_language.startswith('en-'):
             return 'en'
-        elif detected_language in ['ar', 'arb']:  # 'arb' is Modern Standard Arabic
+        elif detected_language in ['ar', 'arb'] or detected_language.startswith('ar-'):
             return 'ar'
         else:
             logger.warning(f"Unsupported language detected: {detected_language}. Defaulting to English.")
