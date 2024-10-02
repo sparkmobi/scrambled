@@ -16,12 +16,12 @@ def transcribe_youtube(youtube_url):
     return loop.run_until_complete(_transcribe_youtube(youtube_url))
 
 @celery_app.task(name='tasks.transcribe_file')
-def transcribe_file(file_path, filename, temp_dir):
+def transcribe_file(file_path, filename):
     loop = asyncio.get_event_loop()
     try:
         return loop.run_until_complete(_transcribe_file(file_path, filename))
     finally:
-        cleanup_temp_files(temp_dir)
+        cleanup_temp_files(os.path.dirname(file_path))
 
 async def _transcribe_urls(urls):
     transcriptions = []
