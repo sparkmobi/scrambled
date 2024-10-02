@@ -291,7 +291,7 @@ async def transcribe(request: TranscriptionRequest, background_tasks: Background
 
 # Modify the upload_file function
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...), background_tasks: BackgroundTasks):
+async def upload_file(file: UploadFile = File(...), *, background_tasks: BackgroundTasks):
     task_id = str(uuid4())
     task_results[task_id] = {"status": "processing"}
     background_tasks.add_task(process_task, task_id, "upload", file)
