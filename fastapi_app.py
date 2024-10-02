@@ -294,7 +294,7 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 # Modify the transcribe_chunk function to use the detected language
-async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, language):
+async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir):
     temp_file_path = None
     max_retries = 5
     for attempt in range(max_retries):
@@ -312,7 +312,7 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
                 logger.info(f"Using AssemblyAI for chunk {chunk_number}")
                 aai.settings.api_key = ASSEMBLYAI_API_KEY
                 
-                config = aai.TranscriptionConfig(language_code=language)
+                config = aai.TranscriptionConfig(language_detection=True)
                 transcriber = aai.Transcriber()
                 transcript = await asyncio.to_thread(transcriber.transcribe, temp_file_path, config=config)
                 
@@ -332,8 +332,7 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
                             model="whisper-large-v3",
                             prompt="",
                             temperature=0.0,
-                            response_format="text",
-                            language=language  # Add the detected language here
+                            response_format="text"
                         )
                     
                     logger.info(f"Groq API response type: {type(response)}")
