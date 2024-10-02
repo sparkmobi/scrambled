@@ -24,6 +24,7 @@ import signal
 import sys
 from celery import Celery
 from celery.result import AsyncResult
+from langdetect import detect
 
 # Add the current directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -120,7 +121,32 @@ def split_audio(audio_file, max_duration=1750):
 def exponential_backoff(attempt, max_delay=60):
     return min(2 ** attempt + random.uniform(0, 1), max_delay)
 
-async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir):
+async def detect_audio_language(file_path):
+    try:
+        # Load the first 30 seconds of the audio
+        audio = AudioSegment.from_file(file_path)
+        sample = audio[:30000]  # 30 seconds
+
+        # Export the sample to a temporary file
+        temp_sample_path = f"{file_path}_sample.mp3"
+        sample.export(temp_sample_path, format="mp3")
+
+        # Transcribe the sample
+        sample_transcript = await process_audio(temp_sample_path)
+
+        # Detect language
+        language = detect(sample_transcript)
+
+        logger.info(f"Detected language: {language}")
+        return language
+    except Exception as e:
+        logger.error(f"Error detecting audio language: {str(e)}")
+        return "en"  # Default to English if detection fails
+    finally:
+        if os.path.exists(temp_sample_path):
+            os.remove(temp_sample_path)
+
+async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, language):
     temp_file_path = None
     max_retries = 5
     for attempt in range(max_retries):
@@ -139,7 +165,7 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir):
                 aai.settings.api_key = ASSEMBLYAI_API_KEY
                 
                 transcriber = aai.Transcriber()
-                transcript = await asyncio.to_thread(transcriber.transcribe, temp_file_path)
+                transcript = await asyncio.to_thread(transcriber.transcribe, temp_file_path, language=language)
                 
                 if transcript.status == "error":
                     raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
@@ -157,7 +183,8 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir):
                             model="whisper-large-v3",
                             prompt="",
                             temperature=0.0,
-                            response_format="text"
+                            response_format="text",
+                            language=language
                         )
                     
                     logger.info(f"Groq API response type: {type(response)}")
@@ -198,7 +225,7 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir):
                 except Exception as e:
                     logger.error(f"Error deleting temporary file {temp_file_path}: {str(e)}")
 
-async def process_audio(file_path):
+async def process_audio(file_path, detect_lang=False):
     temp_dir = create_temp_dir()
     try:
         file_extension = os.path.splitext(file_path)[1].lower()
@@ -213,6 +240,11 @@ async def process_audio(file_path):
         preprocessed_file = os.path.join(temp_dir, f"preprocessed_audio_{int(time.time() * 1000)}.mp3")
         preprocess_audio(file_path, preprocessed_file)
         
+        if detect_lang:
+            language = await detect_audio_language(preprocessed_file)
+        else:
+            language = "en"  # Default to English if not detecting
+
         chunks = split_audio(preprocessed_file)
         logger.info(f"Audio split into {len(chunks)} chunks")
 
@@ -220,7 +252,7 @@ async def process_audio(file_path):
         tasks = []
         for i, chunk in enumerate(chunks):
             audio_duration = len(chunk) / 1000
-            task = asyncio.create_task(transcribe_chunk(chunk, i+1, audio_duration, temp_dir))
+            task = asyncio.create_task(transcribe_chunk(chunk, i+1, audio_duration, temp_dir, language))
             tasks.append(task)
 
         transcripts = await asyncio.gather(*tasks)
@@ -294,10 +326,10 @@ async def download_youtube_audio(youtube_url):
 async def transcribe(request: TranscriptionRequest):
     try:
         if request.urls:
-            task = celery_app.send_task('tasks.transcribe_urls', args=[request.urls])
+            task = celery_app.send_task('tasks.transcribe_urls', args=[request.urls, True])  # True for language detection
             return JSONResponse(content={"task_id": task.id})
         elif request.youtube_url:
-            task = celery_app.send_task('tasks.transcribe_youtube', args=[request.youtube_url])
+            task = celery_app.send_task('tasks.transcribe_youtube', args=[request.youtube_url, True])  # True for language detection
             return JSONResponse(content={"task_id": task.id})
         else:
             raise HTTPException(status_code=400, detail="No URLs or YouTube URL provided")
@@ -314,7 +346,7 @@ async def upload_file(file: UploadFile = File(...)):
         with open(temp_file_path, "wb") as temp_file:
             content = await file.read()
             temp_file.write(content)
-        task = celery_app.send_task('tasks.transcribe_file', args=[temp_file_path, file.filename])
+        task = celery_app.send_task('tasks.transcribe_file', args=[temp_file_path, file.filename, True])  # True for language detection
         return JSONResponse(content={"task_id": task.id})
     except Exception as e:
         logger.error(f"An error occurred during file upload: {str(e)}")
