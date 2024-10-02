@@ -132,8 +132,8 @@ async def detect_audio_language(file_path):
             speech_model=aai.SpeechModel.nano,
         )
         transcript = await asyncio.to_thread(transcriber.transcribe, file_path, config=config)
-        detected_language = transcript.detected_language_code
-        logger.info(f"Detected language code: {detected_language}")
+        #detected_language = transcript.detected_language_code
+        logger.info(f"Detected language code: {transcript}")
         
         # Map the detected language to 'en' or 'ar'
         if detected_language == 'en':
