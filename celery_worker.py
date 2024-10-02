@@ -6,6 +6,7 @@ import os
 import shutil
 
 celery_app = Celery('tasks', broker='redis://localhost:6379/0', backend='redis://localhost:6379/0')
+celery_app.conf.broker_connection_retry_on_startup = True
 
 @celery_app.task(name='tasks.transcribe_urls')
 def transcribe_urls(urls):
