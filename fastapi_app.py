@@ -311,7 +311,7 @@ async def upload_file(file: UploadFile = File(...)):
         with open(temp_file_path, "wb") as temp_file:
             content = await file.read()
             temp_file.write(content)
-        task = celery_app.send_task('tasks.transcribe_file', args=[temp_file_path, file.filename, temp_dir])
+        task = celery_app.send_task('tasks.transcribe_file', args=[temp_file_path, file.filename])
         return JSONResponse(content={"task_id": task.id})
     except Exception as e:
         logger.error(f"An error occurred during file upload: {str(e)}")
