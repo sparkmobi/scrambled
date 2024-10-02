@@ -24,7 +24,6 @@ import signal
 import sys
 from celery import Celery
 from celery.result import AsyncResult
-from langdetect import detect
 
 # Add the current directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -121,111 +120,39 @@ def split_audio(audio_file, max_duration=1750):
 def exponential_backoff(attempt, max_delay=60):
     return min(2 ** attempt + random.uniform(0, 1), max_delay)
 
+# Add this function to detect the language
 async def detect_audio_language(file_path):
     try:
-        # Load the first 30 seconds of the audio
+        # Configure AssemblyAI
+        aai.settings.api_key = ASSEMBLYAI_API_KEY
+        
+        # Load the first 30 seconds of the audio file
         audio = AudioSegment.from_file(file_path)
         sample = audio[:30000]  # 30 seconds
-
-        # Export the sample to a temporary file
-        temp_sample_path = f"{file_path}_sample.mp3"
-        sample.export(temp_sample_path, format="mp3")
-
-        # Transcribe the sample
-        sample_transcript = await process_audio(temp_sample_path)
-
-        # Detect language
-        language = detect(sample_transcript)
-
-        logger.info(f"Detected language: {language}")
-        return language
+        
+        # Save the sample to a temporary file
+        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
+            sample.export(temp_file.name, format="mp3")
+            
+            # Use AssemblyAI to detect the language
+            config = aai.TranscriptionConfig(language_detection=True)
+            transcriber = aai.Transcriber()
+            transcript = transcriber.transcribe(temp_file.name, config=config)
+        
+        # Clean up the temporary file
+        os.unlink(temp_file.name)
+        
+        # Get the detected language
+        detected_language = transcript.language_code
+        
+        return 'en' if detected_language == 'en' else 'ar'
     except Exception as e:
         logger.error(f"Error detecting audio language: {str(e)}")
-        return "en"  # Default to English if detection fails
-    finally:
-        if os.path.exists(temp_sample_path):
-            os.remove(temp_sample_path)
+        # Default to English if detection fails
+        return 'en'
 
-async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, language):
-    temp_file_path = None
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            with tempfile.NamedTemporaryFile(dir=temp_dir, suffix='.mp3', delete=False) as temp_file:
-                temp_file_path = temp_file.name
-                chunk.export(temp_file_path, format="mp3", bitrate="32k")
-            
-            logger.info(f"Attempting to transcribe chunk {chunk_number} (Attempt {attempt + 1}/{max_retries})")
-            
-            with api_key_lock:
-                api_key = get_available_key(audio_duration)
-            
-            if api_key == "use_assemblyai" or attempt == max_retries - 1:
-                logger.info(f"Using AssemblyAI for chunk {chunk_number}")
-                aai.settings.api_key = ASSEMBLYAI_API_KEY
-                
-                transcriber = aai.Transcriber()
-                transcript = await asyncio.to_thread(transcriber.transcribe, temp_file_path, language=language)
-                
-                if transcript.status == "error":
-                    raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
-                
-                transcript_text = transcript.text
-            elif api_key is None:
-                raise Exception("No available API keys")
-            else:
-                try:
-                    client = AsyncGroq(api_key=api_key)
-                    
-                    with open(temp_file_path, "rb") as audio_file:
-                        response = await client.audio.transcriptions.create(
-                            file=audio_file,
-                            model="whisper-large-v3",
-                            prompt="",
-                            temperature=0.0,
-                            response_format="text",
-                            language=language
-                        )
-                    
-                    logger.info(f"Groq API response type: {type(response)}")
-                    logger.info(f"Groq API response: {response}")
-                    
-                    if isinstance(response, str):
-                        transcript_text = response.strip()
-                    elif isinstance(response, dict) and 'text' in response:
-                        transcript_text = response['text'].strip()
-                    elif hasattr(response, 'text'):
-                        transcript_text = response.text.strip()
-                    else:
-                        transcript_text = str(response).strip()
-                    
-                except Exception as e:
-                    logger.error(f"Error with Groq API: {str(e)}")
-                    logger.error(f"Error type: {type(e)}")
-                    logger.error(f"Error args: {e.args}")
-                    if attempt < max_retries - 1:
-                        continue
-                    else:
-                        raise
-            
-            logger.info(f"Transcribed text: {transcript_text[:100]}...")  # Log first 100 characters
-            logger.info(f"Chunk {chunk_number} processed successfully")
-            return transcript_text
-        except Exception as e:
-            logger.error(f"Error in transcribe_chunk {chunk_number} (Attempt {attempt + 1}/{max_retries}): {str(e)}")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(exponential_backoff(attempt))
-            else:
-                raise
-        finally:
-            if temp_file_path and os.path.exists(temp_file_path):
-                try:
-                    os.remove(temp_file_path)
-                    logger.info(f"Temporary file {temp_file_path} deleted")
-                except Exception as e:
-                    logger.error(f"Error deleting temporary file {temp_file_path}: {str(e)}")
-
-async def process_audio(file_path, detect_lang=False):
+# Modify the process_audio function to include language detection
+async def process_audio(file_path):
     temp_dir = create_temp_dir()
     try:
         file_extension = os.path.splitext(file_path)[1].lower()
@@ -240,13 +167,12 @@ async def process_audio(file_path, detect_lang=False):
         preprocessed_file = os.path.join(temp_dir, f"preprocessed_audio_{int(time.time() * 1000)}.mp3")
         preprocess_audio(file_path, preprocessed_file)
         
-        if detect_lang:
-            language = await detect_audio_language(preprocessed_file)
-        else:
-            language = "en"  # Default to English if not detecting
-
         chunks = split_audio(preprocessed_file)
         logger.info(f"Audio split into {len(chunks)} chunks")
+
+        # Detect the language before preprocessing
+        language = await detect_audio_language(file_path)
+        logger.info(f"Detected language: {language}")
 
         transcripts = []
         tasks = []
@@ -326,10 +252,10 @@ async def download_youtube_audio(youtube_url):
 async def transcribe(request: TranscriptionRequest):
     try:
         if request.urls:
-            task = celery_app.send_task('tasks.transcribe_urls', args=[request.urls, True])  # True for language detection
+            task = celery_app.send_task('tasks.transcribe_urls', args=[request.urls])
             return JSONResponse(content={"task_id": task.id})
         elif request.youtube_url:
-            task = celery_app.send_task('tasks.transcribe_youtube', args=[request.youtube_url, True])  # True for language detection
+            task = celery_app.send_task('tasks.transcribe_youtube', args=[request.youtube_url])
             return JSONResponse(content={"task_id": task.id})
         else:
             raise HTTPException(status_code=400, detail="No URLs or YouTube URL provided")
@@ -346,7 +272,7 @@ async def upload_file(file: UploadFile = File(...)):
         with open(temp_file_path, "wb") as temp_file:
             content = await file.read()
             temp_file.write(content)
-        task = celery_app.send_task('tasks.transcribe_file', args=[temp_file_path, file.filename, True])  # True for language detection
+        task = celery_app.send_task('tasks.transcribe_file', args=[temp_file_path, file.filename])
         return JSONResponse(content={"task_id": task.id})
     except Exception as e:
         logger.error(f"An error occurred during file upload: {str(e)}")
@@ -367,6 +293,87 @@ async def get_task_status(task_id: str):
 def signal_handler(sig, frame):
     print("Received shutdown signal. Stopping server...")
     sys.exit(0)
+
+# Modify the transcribe_chunk function to use the detected language
+async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, language):
+    temp_file_path = None
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            with tempfile.NamedTemporaryFile(dir=temp_dir, suffix='.mp3', delete=False) as temp_file:
+                temp_file_path = temp_file.name
+                chunk.export(temp_file_path, format="mp3", bitrate="32k")
+            
+            logger.info(f"Attempting to transcribe chunk {chunk_number} (Attempt {attempt + 1}/{max_retries})")
+            
+            with api_key_lock:
+                api_key = get_available_key(audio_duration)
+            
+            if api_key == "use_assemblyai" or attempt == max_retries - 1:
+                logger.info(f"Using AssemblyAI for chunk {chunk_number}")
+                aai.settings.api_key = ASSEMBLYAI_API_KEY
+                
+                config = aai.TranscriptionConfig(language_code=language)
+                transcriber = aai.Transcriber()
+                transcript = await asyncio.to_thread(transcriber.transcribe, temp_file_path, config=config)
+                
+                if transcript.status == "error":
+                    raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
+                
+                transcript_text = transcript.text
+            elif api_key is None:
+                raise Exception("No available API keys")
+            else:
+                try:
+                    client = AsyncGroq(api_key=api_key)
+                    
+                    with open(temp_file_path, "rb") as audio_file:
+                        response = await client.audio.transcriptions.create(
+                            file=audio_file,
+                            model="whisper-large-v3",
+                            prompt="",
+                            temperature=0.0,
+                            response_format="text",
+                            language=language  # Add the detected language here
+                        )
+                    
+                    logger.info(f"Groq API response type: {type(response)}")
+                    logger.info(f"Groq API response: {response}")
+                    
+                    if isinstance(response, str):
+                        transcript_text = response.strip()
+                    elif isinstance(response, dict) and 'text' in response:
+                        transcript_text = response['text'].strip()
+                    elif hasattr(response, 'text'):
+                        transcript_text = response.text.strip()
+                    else:
+                        transcript_text = str(response).strip()
+                    
+                except Exception as e:
+                    logger.error(f"Error with Groq API: {str(e)}")
+                    logger.error(f"Error type: {type(e)}")
+                    logger.error(f"Error args: {e.args}")
+                    if attempt < max_retries - 1:
+                        continue
+                    else:
+                        raise
+            
+            logger.info(f"Transcribed text: {transcript_text[:100]}...")  # Log first 100 characters
+            logger.info(f"Chunk {chunk_number} processed successfully")
+            return transcript_text
+        except Exception as e:
+            logger.error(f"Error in transcribe_chunk {chunk_number} (Attempt {attempt + 1}/{max_retries}): {str(e)}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(exponential_backoff(attempt))
+            else:
+                raise
+        finally:
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.remove(temp_file_path)
+                    logger.info(f"Temporary file {temp_file_path} deleted")
+                except Exception as e:
+                    logger.error(f"Error deleting temporary file {temp_file_path}: {str(e)}")
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
