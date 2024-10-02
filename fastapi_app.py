@@ -339,6 +339,19 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
-    config = uvicorn.Config(app=app, host="0.0.0.0", port=8000)
+    import multiprocessing
+
+    # Determine the number of worker processes
+    workers = multiprocessing.cpu_count()
+    
+    # Configure Uvicorn to use multiple workers
+    config = uvicorn.Config(
+        app=app, 
+        host="0.0.0.0", 
+        port=8000,
+        workers=workers,
+        loop="asyncio",
+        log_level="info"
+    )
     server = uvicorn.Server(config)
     server.run()
