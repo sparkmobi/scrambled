@@ -61,12 +61,16 @@ class TranscriptionRequest(BaseModel):
 def create_temp_dir():
     return tempfile.mkdtemp(dir=SCRIPT_DIR)
 
-def cleanup_temp_files(temp_dir):
+def cleanup_temp_files(path):
     try:
-        shutil.rmtree(temp_dir)
-        logger.info(f"Cleaned up temporary directory: {temp_dir}")
+        if os.path.isfile(path):
+            os.remove(path)
+            logger.info(f"Cleaned up temporary file: {path}")
+        elif os.path.isdir(path):
+            shutil.rmtree(path)
+            logger.info(f"Cleaned up temporary directory: {path}")
     except Exception as e:
-        logger.error(f"Error cleaning up temporary directory {temp_dir}: {str(e)}")
+        logger.error(f"Error cleaning up temporary path {path}: {str(e)}")
 
 def convert_opus_to_mp3(input_file, output_file):
     try:
@@ -307,13 +311,12 @@ async def upload_file(file: UploadFile = File(...)):
         with open(temp_file_path, "wb") as temp_file:
             content = await file.read()
             temp_file.write(content)
-        task = celery_app.send_task('tasks.transcribe_file', args=[temp_file_path, file.filename])
+        task = celery_app.send_task('tasks.transcribe_file', args=[temp_file_path, file.filename, temp_dir])
         return JSONResponse(content={"task_id": task.id})
     except Exception as e:
         logger.error(f"An error occurred during file upload: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
         cleanup_temp_files(temp_dir)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/task/{task_id}")
 async def get_task_status(task_id: str):
