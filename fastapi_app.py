@@ -304,8 +304,11 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
             
             logger.info(f"Attempting to transcribe chunk {chunk_number} (Attempt {attempt + 1}/{max_retries})")
             
+            
             with api_key_lock:
-                api_key = get_available_key(audio_duration)
+                # Specify the model based on the language
+                model = "distil-whisper-large-v3-en" if language == 'en' else "whisper-large-v3"
+                api_key = get_available_key(audio_duration, model=model)
             
             if api_key == "use_assemblyai" or attempt == max_retries - 1:
                 logger.info(f"Using AssemblyAI for chunk {chunk_number}")
@@ -325,8 +328,7 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
                 try:
                     client = AsyncGroq(api_key=api_key)
                     
-                    # Choose the appropriate Groq model based on the detected language
-                    model = "distil-whisper-large-v3-en" if language == 'en' else "whisper-large-v3"
+                    # Use the model from the MODELS dictionary
                     logger.info(f"Using Groq model: {model} for chunk {chunk_number}")
                     
                     with open(temp_file_path, "rb") as audio_file:
@@ -372,6 +374,8 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
             if temp_file_path and os.path.exists(temp_file_path):
                 try:
                     os.remove(temp_file_path)
+                except Exception as e:
+                    logger.error(f"Error removing temporary file {temp_file_path}: {str(e)}")
                     logger.info(f"Temporary file {temp_file_path} deleted")
                 except Exception as e:
                     logger.error(f"Error deleting temporary file {temp_file_path}: {str(e)}")
