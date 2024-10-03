@@ -293,8 +293,7 @@ def signal_handler(sig, frame):
     print("Received shutdown signal. Stopping server...")
     sys.exit(0)
 
-# Modify the transcribe_chunk function to use the detected language
-async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir):
+async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, language):
     temp_file_path = None
     max_retries = 5
     for attempt in range(max_retries):
@@ -326,10 +325,14 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir):
                 try:
                     client = AsyncGroq(api_key=api_key)
                     
+                    # Choose the appropriate Groq model based on the detected language
+                    model = "distil-whisper-large-v3-en" if language == 'en' else "whisper-large-v3"
+                    logger.info(f"Using Groq model: {model} for chunk {chunk_number}")
+                    
                     with open(temp_file_path, "rb") as audio_file:
                         response = await client.audio.transcriptions.create(
                             file=audio_file,
-                            model="whisper-large-v3",
+                            model=model,
                             prompt="",
                             temperature=0.0,
                             response_format="text"
