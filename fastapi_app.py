@@ -308,9 +308,6 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
             model = "distil-whisper-large-v3-en" if language == 'en' else "whisper-large-v3-turbo"
             api_key = get_available_key(audio_duration, model=model)
             
-            if api_key == FALLBACK_API_KEY:
-                logger.warning(f"Using fallback API key for chunk {chunk_number}")
-            
             if api_key == "use_assemblyai":
                 logger.info(f"Using AssemblyAI for chunk {chunk_number}")
                 transcript_text = await use_assemblyai_transcription(temp_file_path)
