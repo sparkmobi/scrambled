@@ -10,7 +10,7 @@ from pydub import AudioSegment
 from dotenv import load_dotenv
 from groq import Groq, AsyncGroq
 import ffmpeg
-from api_key_manager import get_available_key, reset_counters, logger as api_key_logger
+from api_key_manager import get_available_key, reset_counters, logger as api_key_logger, FALLBACK_API_KEY
 import time
 import tempfile
 import shutil
@@ -305,62 +305,27 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
             
             logger.info(f"Attempting to transcribe chunk {chunk_number} (Attempt {attempt + 1}/{max_retries})")
             
+            model = "distil-whisper-large-v3-en" if language == 'en' else "whisper-large-v3-turbo"
+            api_key = get_available_key(audio_duration, model=model)
             
-            with api_key_lock:
-                # Specify the model based on the language
-                model = "distil-whisper-large-v3-en" if language == 'en' else "whisper-large-v3"
-                api_key = get_available_key(audio_duration, model=model)
+            if api_key == FALLBACK_API_KEY:
+                logger.warning(f"Using fallback API key for chunk {chunk_number}")
             
-            if api_key == "use_assemblyai" or attempt == max_retries - 1:
+            if api_key == "use_assemblyai":
                 logger.info(f"Using AssemblyAI for chunk {chunk_number}")
-                aai.settings.api_key = ASSEMBLYAI_API_KEY
-                
-                config = aai.TranscriptionConfig(language_detection=True)
-                transcriber = aai.Transcriber()
-                transcript = await asyncio.to_thread(transcriber.transcribe, temp_file_path, config=config)
-                
-                if transcript.status == "error":
-                    raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
-                
-                transcript_text = transcript.text
-            elif api_key is None:
-                raise Exception("No available API keys")
+                transcript_text = await use_assemblyai_transcription(temp_file_path)
             else:
                 try:
                     client = AsyncGroq(api_key=api_key)
-                    
-                    # Use the model from the MODELS dictionary
                     logger.info(f"Using Groq model: {model} for chunk {chunk_number}")
-                    
-                    with open(temp_file_path, "rb") as audio_file:
-                        response = await client.audio.transcriptions.create(
-                            file=audio_file,
-                            model=model,
-                            prompt="",
-                            temperature=0.0,
-                            response_format="text"
-                        )
-                    
-                    logger.info(f"Groq API response type: {type(response)}")
-                    logger.info(f"Groq API response: {response}")
-                    
-                    if isinstance(response, str):
-                        transcript_text = response.strip()
-                    elif isinstance(response, dict) and 'text' in response:
-                        transcript_text = response['text'].strip()
-                    elif hasattr(response, 'text'):
-                        transcript_text = response.text.strip()
-                    else:
-                        transcript_text = str(response).strip()
-                    
+                    transcript_text = await use_groq_transcription(client, temp_file_path, model)
                 except Exception as e:
                     logger.error(f"Error with Groq API: {str(e)}")
-                    logger.error(f"Error type: {type(e)}")
-                    logger.error(f"Error args: {e.args}")
                     if attempt < max_retries - 1:
                         continue
                     else:
-                        raise
+                        logger.info(f"Falling back to AssemblyAI for chunk {chunk_number}")
+                        transcript_text = await use_assemblyai_transcription(temp_file_path)
             
             logger.info(f"Transcribed text: {transcript_text[:100]}...")  # Log first 100 characters
             logger.info(f"Chunk {chunk_number} processed successfully")
@@ -375,11 +340,39 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
             if temp_file_path and os.path.exists(temp_file_path):
                 try:
                     os.remove(temp_file_path)
-                except Exception as e:
-                    logger.error(f"Error removing temporary file {temp_file_path}: {str(e)}")
                     logger.info(f"Temporary file {temp_file_path} deleted")
                 except Exception as e:
                     logger.error(f"Error deleting temporary file {temp_file_path}: {str(e)}")
+
+    raise Exception(f"Failed to transcribe chunk {chunk_number} after {max_retries} attempts")
+
+async def use_assemblyai_transcription(file_path):
+    aai.settings.api_key = ASSEMBLYAI_API_KEY
+    config = aai.TranscriptionConfig(language_detection=True)
+    transcriber = aai.Transcriber()
+    transcript = await asyncio.to_thread(transcriber.transcribe, file_path, config=config)
+    if transcript.status == "error":
+        raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
+    return transcript.text
+
+async def use_groq_transcription(client, file_path, model):
+    with open(file_path, "rb") as audio_file:
+        response = await client.audio.transcriptions.create(
+            file=audio_file,
+            model=model,
+            prompt="",
+            temperature=0.0,
+            response_format="text"
+        )
+    
+    if isinstance(response, str):
+        return response.strip()
+    elif isinstance(response, dict) and 'text' in response:
+        return response['text'].strip()
+    elif hasattr(response, 'text'):
+        return response.text.strip()
+    else:
+        return str(response).strip()
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
