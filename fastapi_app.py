@@ -47,6 +47,7 @@ file_lock = threading.Lock()
 api_key_lock = threading.Lock()
 
 # Add this to your environment variables or directly in the code (be cautious with API keys)
+
 ASSEMBLYAI_API_KEY = "7c5d242d606542268916c235daa26031"
 
 app = FastAPI()
