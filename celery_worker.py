@@ -5,6 +5,10 @@ import logging
 import os
 import shutil
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 celery_app = Celery('tasks', broker='redis://localhost:6379/0', backend='redis://localhost:6379/0')
 celery_app.conf.broker_connection_retry_on_startup = True
 
@@ -62,10 +66,10 @@ async def _transcribe_file(file_path, filename):
         transcription = await process_audio(file_path)
         return {"filename": filename, "transcription": transcription}
     except FileNotFoundError:
-        logging.error(f"File not found: {file_path}")
+        logger.error(f"File not found: {file_path}")
         return {"filename": filename, "error": "File not found"}
     except Exception as e:
-        logging.error(f"Error processing file {filename}: {str(e)}")
+        logger.error(f"Error processing file {filename}: {str(e)}")
         return {"filename": filename, "error": str(e)}
 
 def cleanup_temp_files(path):
