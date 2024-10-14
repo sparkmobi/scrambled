@@ -12,14 +12,14 @@ supabase: Client = create_client(url, key)
 # Define model-specific constants
 MODELS = {
     "whisper-large-v3-turbo": {
-        "table_name": "api_keys",
+        "table_name": "api_keys_distil",
         "minute_limit": 20,
         "day_limit": 2000,
         "hour_audio_limit": 7200,
         "day_audio_limit": 28800
     },
-    "distil-whisper-large-v3-en": {
-        "table_name": "api_keys_distil",
+    "whisper-large-v3": {
+        "table_name": "api_keys",
         "minute_limit": 30,
         "day_limit": 3000,
         "hour_audio_limit": 10800,
