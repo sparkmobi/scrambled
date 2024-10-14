@@ -24,6 +24,7 @@ import signal
 import sys
 from celery import Celery
 from celery.result import AsyncResult
+import socket
 
 # Add the current directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -296,6 +297,7 @@ def signal_handler(sig, frame):
 async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, language):
     temp_file_path = None
     max_retries = 5
+    use_assemblyai = False
     for attempt in range(max_retries):
         try:
             with tempfile.NamedTemporaryFile(dir=temp_dir, suffix='.mp3', delete=False) as temp_file:
@@ -310,7 +312,7 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
                 model = "distil-whisper-large-v3-en" if language == 'en' else "whisper-large-v3"
                 api_key = get_available_key(audio_duration, model=model)
             
-            if api_key == "use_assemblyai" or attempt == max_retries - 1:
+            if use_assemblyai or api_key == "use_assemblyai" or attempt == max_retries - 1:
                 logger.info(f"Using AssemblyAI for chunk {chunk_number}")
                 aai.settings.api_key = ASSEMBLYAI_API_KEY
                 
@@ -352,6 +354,14 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
                     else:
                         transcript_text = str(response).strip()
                     
+                except (socket.gaierror, socket.timeout) as e:
+                    logger.error(f"Network error with Groq API: {str(e)}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(exponential_backoff(attempt))
+                        continue
+                    else:
+                        use_assemblyai = True
+                        continue
                 except Exception as e:
                     logger.error(f"Error with Groq API: {str(e)}")
                     logger.error(f"Error type: {type(e)}")
