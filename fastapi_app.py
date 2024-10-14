@@ -125,33 +125,6 @@ def exponential_backoff(attempt, max_delay=60):
 aai.settings.api_key = ASSEMBLYAI_API_KEY
 transcriber = aai.Transcriber()
 
-async def detect_audio_language(file_path):
-    try:
-        config = aai.TranscriptionConfig(
-            audio_end_at=60000,  # first 60 seconds (in milliseconds)
-            language_detection=True,
-            speech_model=aai.SpeechModel.nano,
-        )
-        transcript = await asyncio.to_thread(transcriber.transcribe, file_path, config=config)
-        
-        # Access the detected language from the transcript object
-        detected_language = transcript.json_response["language_code"]
-        logger.info(f"Detected language: {detected_language}")
-        
-        # Map the detected language to 'en' or 'ar'
-        if detected_language == 'en' or detected_language.startswith('en-'):
-            return 'en'
-        elif detected_language in ['ar', 'arb'] or detected_language.startswith('ar-'):
-            return 'ar'
-        else:
-            logger.warning(f"Unsupported language detected: {detected_language}. Defaulting to English.")
-            return 'en'
-    except Exception as e:
-        logger.error(f"Error detecting audio language: {str(e)}")
-        # Default to English if detection fails
-        return 'en'
-
-# Update the process_audio function to use the new detect_audio_language
 async def process_audio(file_path):
     temp_dir = create_temp_dir()
     try:
@@ -170,9 +143,9 @@ async def process_audio(file_path):
         chunks = split_audio(preprocessed_file)
         logger.info(f"Audio split into {len(chunks)} chunks")
 
-        # Detect the language before preprocessing
-        language = await detect_audio_language(file_path)
-        logger.info(f"Detected language: {language}")
+        # Assume English for now, you can add language detection later
+        language = 'en'
+        logger.info(f"Assumed language: {language}")
 
         transcripts = []
         tasks = []
@@ -305,7 +278,8 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
             
             logger.info(f"Attempting to transcribe chunk {chunk_number} (Attempt {attempt + 1}/{max_retries})")
             
-            model = "distil-whisper-large-v3-en" if language == 'en' else "whisper-large-v3-turbo"
+            # Always use the English model for now
+            model = "distil-whisper-large-v3-en"
             api_key = get_available_key(audio_duration, model=model)
             
             if api_key == "use_assemblyai":
@@ -345,7 +319,8 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
 
 async def use_assemblyai_transcription(file_path):
     aai.settings.api_key = ASSEMBLYAI_API_KEY
-    config = aai.TranscriptionConfig(language_detection=True)
+    # Remove language detection from AssemblyAI config
+    config = aai.TranscriptionConfig()
     transcriber = aai.Transcriber()
     transcript = await asyncio.to_thread(transcriber.transcribe, file_path, config=config)
     if transcript.status == "error":
