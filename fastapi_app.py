@@ -10,7 +10,7 @@ from pydub import AudioSegment
 from dotenv import load_dotenv
 from groq import Groq, AsyncGroq
 import ffmpeg
-from api_key_manager import get_available_key, reset_counters, logger as api_key_logger, FALLBACK_API_KEY
+from api_key_manager import get_available_key, reset_counters, logger as api_key_logger
 import time
 import tempfile
 import shutil
