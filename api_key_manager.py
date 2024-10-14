@@ -11,7 +11,7 @@ supabase: Client = create_client(url, key)
 
 # Define model-specific constants
 MODELS = {
-    "whisper-large-v3": {
+    "whisper-large-v3-turbo": {
         "table_name": "api_keys",
         "minute_limit": 20,
         "day_limit": 2000,
@@ -20,7 +20,7 @@ MODELS = {
     },
     "distil-whisper-large-v3-en": {
         "table_name": "api_keys_distil",
-        "minute_limit": 30,  # Example: adjust these limits as needed
+        "minute_limit": 30,
         "day_limit": 3000,
         "hour_audio_limit": 10800,
         "day_audio_limit": 43200
@@ -31,64 +31,70 @@ MODELS = {
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def get_available_key(audio_duration, model="whisper-large-v3", max_retries=5, retry_delay=60):
+def is_supabase_available():
+    try:
+        # Try to make a simple query to Supabase
+        supabase.table("api_keys").select("id").limit(1).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Supabase is not available: {str(e)}")
+        return False
+
+def get_available_key(audio_duration, model="whisper-large-v3-turbo", max_retries=5, retry_delay=60):
+    if not is_supabase_available():
+        logger.warning("Supabase is not available. Falling back to AssemblyAI.")
+        return "use_assemblyai"
+
     model_config = MODELS[model]
     table_name = model_config["table_name"]
     
     for attempt in range(max_retries):
-        now = datetime.now()
-        
-        # Reset counters if necessary
-        reset_counters(model)
-        
-        # Log all API keys before filtering
-        all_keys = supabase.table(table_name).select("*").execute()
-        logger.info(f"Total API keys for {model}: {len(all_keys.data)}")
-        for key in all_keys.data:
-            logger.info(f"Key ID: {key['id']}, hour_audio: {key['hour_audio']}, minute_count: {key['minute_count']}, day_count: {key['day_count']}, day_audio: {key['day_audio']}")
-        
-        # Query for available keys
-        query = supabase.table(table_name).select("*")\
-            .lt("minute_count", model_config["minute_limit"])\
-            .lt("day_count", model_config["day_limit"])\
-            .lt("hour_audio", model_config["hour_audio_limit"] - audio_duration)\
-            .lt("day_audio", model_config["day_audio_limit"] - audio_duration)\
-            .order("hour_audio")
-        
-        logger.info(f"Query parameters: minute_count < {model_config['minute_limit']}, day_count < {model_config['day_limit']}, "
-                    f"hour_audio < {model_config['hour_audio_limit'] - audio_duration}, "
-                    f"day_audio < {model_config['day_audio_limit'] - audio_duration}")
-        
-        response = query.execute()
-        
-        logger.info(f"Available keys: {len(response.data)}")
-        for key in response.data:
-            logger.info(f"Key ID: {key['id']}, hour_audio: {key['hour_audio']}, minute_count: {key['minute_count']}, day_count: {key['day_count']}, day_audio: {key['day_audio']}")
-        
-        if len(response.data) > 0:
-            # Get the first available key (with lowest hour_audio usage)
-            key = response.data[0]
-            logger.info(f"Selected key ID: {key['id']}, hour_audio: {key['hour_audio']}")
+        try:
+            now = datetime.now()
             
-            # Update the usage counts
-            supabase.table(table_name).update({
-                "minute_count": key["minute_count"] + 1,
-                "day_count": key["day_count"] + 1,
-                "hour_audio": key["hour_audio"] + audio_duration,
-                "day_audio": key["day_audio"] + audio_duration,
-                "last_used": now.isoformat()
-            }).eq("id", key["id"]).execute()
+            # Reset counters if necessary
+            reset_counters(model)
             
-            return key["api_key"]
+            # Query for available keys
+            query = supabase.table(table_name).select("*")\
+                .lt("minute_count", model_config["minute_limit"])\
+                .lt("day_count", model_config["day_limit"])\
+                .lt("hour_audio", model_config["hour_audio_limit"] - audio_duration)\
+                .lt("day_audio", model_config["day_audio_limit"] - audio_duration)\
+                .order("hour_audio")
+            
+            response = query.execute()
+            
+            if len(response.data) > 0:
+                key = response.data[0]
+                
+                # Update the usage counts
+                supabase.table(table_name).update({
+                    "minute_count": key["minute_count"] + 1,
+                    "day_count": key["day_count"] + 1,
+                    "hour_audio": key["hour_audio"] + audio_duration,
+                    "day_audio": key["day_audio"] + audio_duration,
+                    "last_used": now.isoformat()
+                }).eq("id", key["id"]).execute()
+                
+                return key["api_key"]
+            
+            if attempt < max_retries - 1:
+                logger.warning(f"No available API keys. Retrying in {retry_delay} seconds. Attempt {attempt + 1}/{max_retries}")
+                time.sleep(retry_delay)
+            else:
+                logger.warning("Max retries reached. Falling back to AssemblyAI.")
+                return "use_assemblyai"
         
-        if attempt < max_retries - 1:
-            logger.warning(f"No available API keys. Retrying in {retry_delay} seconds. Attempt {attempt + 1}/{max_retries}")
-            time.sleep(retry_delay)
-        else:
-            logger.warning("Max retries reached. Switching to AssemblyAI.")
-            return "use_assemblyai"
+        except Exception as e:
+            logger.error(f"Error retrieving API key: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+            else:
+                logger.warning("Max retries reached due to errors. Falling back to AssemblyAI.")
+                return "use_assemblyai"
     
-    return None
+    return "use_assemblyai"
 
 def reset_counters(model):
     model_config = MODELS[model]
