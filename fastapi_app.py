@@ -279,7 +279,7 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
             logger.info(f"Attempting to transcribe chunk {chunk_number} (Attempt {attempt + 1}/{max_retries})")
             
             # Always use the English model for now
-            model = "distil-whisper-large-v3-en"
+            model = "whisper-large-v3-turbo"
             api_key = get_available_key(audio_duration, model=model)
             
             if api_key == "use_assemblyai":
