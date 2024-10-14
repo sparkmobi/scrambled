@@ -58,4 +58,3 @@ assemblyai
 fastapi
 python-multipart
 uvicorn
-pkg_resources
