@@ -24,7 +24,6 @@ import signal
 import sys
 from celery import Celery
 from celery.result import AsyncResult
-import socket
 
 # Add the current directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -263,28 +262,17 @@ async def transcribe(request: TranscriptionRequest):
         logger.error(f"An error occurred during transcription: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Add this list of allowed file extensions
-ALLOWED_EXTENSIONS = {'.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.avi', '.mov', '.wmv', '.flv'}
-
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     temp_dir = create_temp_dir()
     try:
-        file_extension = os.path.splitext(file.filename)[1].lower()
-        
-        # Check if the file extension is allowed
-        if file_extension not in ALLOWED_EXTENSIONS:
-            raise HTTPException(status_code=400, detail="File type not allowed. Please upload an audio or video file.")
-        
+        file_extension = os.path.splitext(file.filename)[1]
         temp_file_path = os.path.join(temp_dir, f"temp_upload_{int(time.time() * 1000)}{file_extension}")
         with open(temp_file_path, "wb") as temp_file:
             content = await file.read()
             temp_file.write(content)
         task = celery_app.send_task('tasks.transcribe_file', args=[temp_file_path, file.filename])
         return JSONResponse(content={"task_id": task.id})
-    except HTTPException as he:
-        cleanup_temp_files(temp_dir)
-        raise he
     except Exception as e:
         logger.error(f"An error occurred during file upload: {str(e)}")
         cleanup_temp_files(temp_dir)
@@ -308,7 +296,6 @@ def signal_handler(sig, frame):
 async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, language):
     temp_file_path = None
     max_retries = 5
-    use_assemblyai = False
     for attempt in range(max_retries):
         try:
             with tempfile.NamedTemporaryFile(dir=temp_dir, suffix='.mp3', delete=False) as temp_file:
@@ -317,7 +304,13 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
             
             logger.info(f"Attempting to transcribe chunk {chunk_number} (Attempt {attempt + 1}/{max_retries})")
             
-            if use_assemblyai or attempt >= 2:  # Use AssemblyAI after 2 failed attempts with Groq
+            
+            with api_key_lock:
+                # Specify the model based on the language
+                model = "distil-whisper-large-v3-en" if language == 'en' else "whisper-large-v3"
+                api_key = get_available_key(audio_duration, model=model)
+            
+            if api_key == "use_assemblyai" or attempt == max_retries - 1:
                 logger.info(f"Using AssemblyAI for chunk {chunk_number}")
                 aai.settings.api_key = ASSEMBLYAI_API_KEY
                 
@@ -329,18 +322,13 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
                     raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
                 
                 transcript_text = transcript.text
+            elif api_key is None:
+                raise Exception("No available API keys")
             else:
-                with api_key_lock:
-                    model = "distil-whisper-large-v3-en" if language == 'en' else "whisper-large-v3"
-                    api_key = get_available_key(audio_duration, model=model)
-                
-                if api_key is None:
-                    logger.warning("No available Groq API keys. Switching to AssemblyAI.")
-                    use_assemblyai = True
-                    continue
-                
                 try:
                     client = AsyncGroq(api_key=api_key)
+                    
+                    # Use the model from the MODELS dictionary
                     logger.info(f"Using Groq model: {model} for chunk {chunk_number}")
                     
                     with open(temp_file_path, "rb") as audio_file:
@@ -364,12 +352,11 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
                     else:
                         transcript_text = str(response).strip()
                     
-                except (socket.gaierror, socket.timeout, Exception) as e:
+                except Exception as e:
                     logger.error(f"Error with Groq API: {str(e)}")
                     logger.error(f"Error type: {type(e)}")
                     logger.error(f"Error args: {e.args}")
                     if attempt < max_retries - 1:
-                        await asyncio.sleep(exponential_backoff(attempt))
                         continue
                     else:
                         raise
@@ -387,22 +374,13 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
             if temp_file_path and os.path.exists(temp_file_path):
                 try:
                     os.remove(temp_file_path)
+                except Exception as e:
+                    logger.error(f"Error removing temporary file {temp_file_path}: {str(e)}")
                     logger.info(f"Temporary file {temp_file_path} deleted")
                 except Exception as e:
                     logger.error(f"Error deleting temporary file {temp_file_path}: {str(e)}")
 
-    raise Exception(f"Failed to transcribe chunk {chunk_number} after {max_retries} attempts")
-
-def check_dns():
-    try:
-        socket.gethostbyname("api.groq.com")
-        logger.info("DNS resolution for api.groq.com successful")
-    except socket.gaierror:
-        logger.error("Unable to resolve api.groq.com. Check your DNS settings or network connection.")
-        # You might want to disable Groq API usage here and default to AssemblyAI
-
 if __name__ == "__main__":
-    check_dns()
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
