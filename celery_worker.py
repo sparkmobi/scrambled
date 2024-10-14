@@ -1,12 +1,9 @@
 from celery import Celery
-from fastapi import logger
 from fastapi_app import process_audio, download_file, download_youtube_audio, cleanup_temp_files
 import asyncio
 import logging
 import os
 import shutil
-import socket
-import subprocess
 
 celery_app = Celery('tasks', broker='redis://localhost:6379/0', backend='redis://localhost:6379/0')
 celery_app.conf.broker_connection_retry_on_startup = True
@@ -84,30 +81,5 @@ def cleanup_temp_files(path):
     except Exception as e:
         logging.error(f"Error cleaning up temporary path {path}: {str(e)}")
 
-def run_network_diagnostics():
-    logger.info("Running network diagnostics...")
-    
-    # Check DNS resolution
-    try:
-        ip = socket.gethostbyname('api.groq.com')
-        logger.info(f"DNS resolution for api.groq.com: {ip}")
-    except socket.gaierror as e:
-        logger.error(f"DNS resolution failed for api.groq.com: {str(e)}")
-    
-    # Ping test
-    try:
-        result = subprocess.run(['ping', '-c', '4', 'api.groq.com'], capture_output=True, text=True)
-        logger.info(f"Ping test result:\n{result.stdout}")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Ping test failed: {str(e)}")
-    
-    # Traceroute
-    try:
-        result = subprocess.run(['traceroute', 'api.groq.com'], capture_output=True, text=True)
-        logger.info(f"Traceroute result:\n{result.stdout}")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Traceroute failed: {str(e)}")
-
 if __name__ == '__main__':
-    run_network_diagnostics()
     celery_app.start()
