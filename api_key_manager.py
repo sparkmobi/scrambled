@@ -40,11 +40,23 @@ def is_supabase_available():
         logger.error(f"Supabase is not available: {str(e)}")
         return False
 
-def get_available_key(audio_duration, model="whisper-large-v3-turbo", max_retries=5, retry_delay=60):
+def get_available_key(audio_duration, max_retries=5, retry_delay=60):
     if not is_supabase_available():
         logger.warning("Supabase is not available. Falling back to AssemblyAI.")
-        return "use_assemblyai"
+        return "use_assemblyai", None
 
+    models_to_try = ["whisper-large-v3-turbo", "whisper-large-v3"]
+
+    for model in models_to_try:
+        logger.info(f"Trying to get an available key for model: {model}")
+        key, model_used = try_get_key(audio_duration, model, max_retries, retry_delay)
+        if key != "use_assemblyai":
+            return key, model_used
+
+    logger.warning("No available keys for any model. Falling back to AssemblyAI.")
+    return "use_assemblyai", None
+
+def try_get_key(audio_duration, model, max_retries, retry_delay):
     model_config = MODELS[model]
     table_name = model_config["table_name"]
     
@@ -77,24 +89,24 @@ def get_available_key(audio_duration, model="whisper-large-v3-turbo", max_retrie
                     "last_used": now.isoformat()
                 }).eq("id", key["id"]).execute()
                 
-                return key["api_key"]
+                return key["api_key"], model
             
             if attempt < max_retries - 1:
-                logger.warning(f"No available API keys. Retrying in {retry_delay} seconds. Attempt {attempt + 1}/{max_retries}")
+                logger.warning(f"No available API keys for {model}. Retrying in {retry_delay} seconds. Attempt {attempt + 1}/{max_retries}")
                 time.sleep(retry_delay)
             else:
-                logger.warning("Max retries reached. Falling back to AssemblyAI.")
-                return "use_assemblyai"
+                logger.warning(f"Max retries reached for {model}. Moving to next model or falling back to AssemblyAI.")
+                return "use_assemblyai", None
         
         except Exception as e:
-            logger.error(f"Error retrieving API key: {str(e)}")
+            logger.error(f"Error retrieving API key for {model}: {str(e)}")
             if attempt < max_retries - 1:
                 time.sleep(retry_delay)
             else:
-                logger.warning("Max retries reached due to errors. Falling back to AssemblyAI.")
-                return "use_assemblyai"
+                logger.warning(f"Max retries reached due to errors for {model}. Moving to next model or falling back to AssemblyAI.")
+                return "use_assemblyai", None
     
-    return "use_assemblyai"
+    return "use_assemblyai", None
 
 def reset_counters(model):
     model_config = MODELS[model]
