@@ -3,8 +3,8 @@ import sys
 import logging
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from typing import List
+from pydantic import BaseModel, Field
+from typing import List, Optional
 import requests
 from pydub import AudioSegment
 from dotenv import load_dotenv
@@ -58,7 +58,9 @@ celery_app.conf.broker_connection_retry_on_startup = True
 
 class TranscriptionRequest(BaseModel):
     urls: List[str] = []
-    youtube_url: str = None
+    youtube_url: Optional[str] = None
+    timestamps: bool = Field(default=False, description="Include timestamps in the transcription")
+    diarization: bool = Field(default=False, description="Enable speaker diarization")
 
 def create_temp_dir():
     return tempfile.mkdtemp(dir=SCRIPT_DIR)
@@ -225,10 +227,10 @@ async def download_youtube_audio(youtube_url):
 async def transcribe(request: TranscriptionRequest):
     try:
         if request.urls:
-            task = celery_app.send_task('tasks.transcribe_urls', args=[request.urls])
+            task = celery_app.send_task('tasks.transcribe_urls', args=[request.urls, request.timestamps, request.diarization])
             return JSONResponse(content={"task_id": task.id})
         elif request.youtube_url:
-            task = celery_app.send_task('tasks.transcribe_youtube', args=[request.youtube_url])
+            task = celery_app.send_task('tasks.transcribe_youtube', args=[request.youtube_url, request.timestamps, request.diarization])
             return JSONResponse(content={"task_id": task.id})
         else:
             raise HTTPException(status_code=400, detail="No URLs or YouTube URL provided")
@@ -267,7 +269,7 @@ def signal_handler(sig, frame):
     print("Received shutdown signal. Stopping server...")
     sys.exit(0)
 
-async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, language):
+async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, language, timestamps, diarization):
     temp_file_path = None
     max_retries = 5
     for attempt in range(max_retries):
@@ -282,19 +284,19 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
             
             if api_key == "use_assemblyai":
                 logger.info(f"Using AssemblyAI for chunk {chunk_number}")
-                transcript_text = await use_assemblyai_transcription(temp_file_path)
+                transcript_text = await use_assemblyai_transcription(temp_file_path, timestamps, diarization)
             else:
                 try:
                     client = AsyncGroq(api_key=api_key)
                     logger.info(f"Using Groq model: {model} for chunk {chunk_number}")
-                    transcript_text = await use_groq_transcription(client, temp_file_path, model)
+                    transcript_text = await use_groq_transcription(client, temp_file_path, model, timestamps, diarization)
                 except Exception as e:
                     logger.error(f"Error with Groq API: {str(e)}")
                     if attempt < max_retries - 1:
                         continue
                     else:
                         logger.info(f"Falling back to AssemblyAI for chunk {chunk_number}")
-                        transcript_text = await use_assemblyai_transcription(temp_file_path)
+                        transcript_text = await use_assemblyai_transcription(temp_file_path, timestamps, diarization)
             
             logger.info(f"Transcribed text: {transcript_text[:100]}...")  # Log first 100 characters
             logger.info(f"Chunk {chunk_number} processed successfully")
@@ -315,27 +317,61 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
 
     raise Exception(f"Failed to transcribe chunk {chunk_number} after {max_retries} attempts")
 
-async def use_assemblyai_transcription(file_path):
+async def use_assemblyai_transcription(file_path, timestamps, diarization):
     aai.settings.api_key = ASSEMBLYAI_API_KEY
-    # Remove language detection from AssemblyAI config
-    config = aai.TranscriptionConfig()
+    config = aai.TranscriptionConfig(
+        word_boost=[],
+        boost_param="default",
+        punctuate=True,
+        format_text=True,
+        dual_channel=False,
+        webhook_url=None,
+        webhook_auth_header_name=None,
+        webhook_auth_header_value=None,
+        auto_highlights=False,
+        audio_start_from=None,
+        audio_end_at=None,
+        word_timestamps=timestamps,
+        speaker_labels=diarization
+    )
     transcriber = aai.Transcriber()
     transcript = await asyncio.to_thread(transcriber.transcribe, file_path, config=config)
     if transcript.status == "error":
         raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
+    
+    if timestamps or diarization:
+        return format_assemblyai_response(transcript, timestamps, diarization)
     return transcript.text
 
-async def use_groq_transcription(client, file_path, model):
+def format_assemblyai_response(transcript, timestamps, diarization):
+    formatted_response = []
+    for utterance in transcript.utterances:
+        entry = {
+            "text": utterance.text,
+        }
+        if timestamps:
+            entry["start"] = utterance.start
+            entry["end"] = utterance.end
+        if diarization:
+            entry["speaker"] = utterance.speaker
+        formatted_response.append(entry)
+    return formatted_response
+
+async def use_groq_transcription(client, file_path, model, timestamps, diarization):
     with open(file_path, "rb") as audio_file:
         response = await client.audio.transcriptions.create(
             file=audio_file,
             model=model,
             prompt="",
             temperature=0.0,
-            response_format="text"
+            response_format="verbose_json" if timestamps or diarization else "text",
+            timestamp_granularities=["word"] if timestamps else None,
+            diarization=diarization
         )
     
-    if isinstance(response, str):
+    if timestamps or diarization:
+        return format_groq_response(response, timestamps, diarization)
+    elif isinstance(response, str):
         return response.strip()
     elif isinstance(response, dict) and 'text' in response:
         return response['text'].strip()
@@ -343,6 +379,20 @@ async def use_groq_transcription(client, file_path, model):
         return response.text.strip()
     else:
         return str(response).strip()
+
+def format_groq_response(response, timestamps, diarization):
+    formatted_response = []
+    for segment in response.segments:
+        entry = {
+            "text": segment.text,
+        }
+        if timestamps:
+            entry["start"] = segment.start
+            entry["end"] = segment.end
+        if diarization and hasattr(segment, 'speaker'):
+            entry["speaker"] = segment.speaker
+        formatted_response.append(entry)
+    return formatted_response
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
