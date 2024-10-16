@@ -9,7 +9,7 @@ url: str = "https://deqoekrxwvziwmclcthu.supabase.co"
 key: str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRlcW9la3J4d3Z6aXdtY2xjdGh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE2Nzg2NjQ5OTksImV4cCI6MTk5NDI0MDk5OX0.9UvqJRTRSiY99vyEfGrJ3wSLtI3ZbwRj07BaGbE9HM4"
 supabase: Client = create_client(url, key)
 
-# Update the MODELS dictionary
+# Define model-specific constants
 MODELS = {
     "whisper-large-v3-turbo": {
         "table_name": "api_keys_distil",
