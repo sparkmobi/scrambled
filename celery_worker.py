@@ -13,24 +13,24 @@ celery_app = Celery('tasks', broker='redis://localhost:6379/0', backend='redis:/
 celery_app.conf.broker_connection_retry_on_startup = True
 
 @celery_app.task(name='tasks.transcribe_urls')
-def transcribe_urls(urls):
+def transcribe_urls(urls, timestamps, diarization):
     loop = asyncio.get_event_loop()
-    return loop.run_until_complete(_transcribe_urls(urls))
+    return loop.run_until_complete(_transcribe_urls(urls, timestamps, diarization))
 
 @celery_app.task(name='tasks.transcribe_youtube')
-def transcribe_youtube(youtube_url):
+def transcribe_youtube(youtube_url, timestamps, diarization):
     loop = asyncio.get_event_loop()
-    return loop.run_until_complete(_transcribe_youtube(youtube_url))
+    return loop.run_until_complete(_transcribe_youtube(youtube_url, timestamps, diarization))
 
 @celery_app.task(name='tasks.transcribe_file')
-def transcribe_file(file_path, filename):
+def transcribe_file(file_path, filename, timestamps, diarization):
     loop = asyncio.get_event_loop()
     try:
-        return loop.run_until_complete(_transcribe_file(file_path, filename))
+        return loop.run_until_complete(_transcribe_file(file_path, filename, timestamps, diarization))
     finally:
-        cleanup_temp_files(file_path)  # Clean up the file, not the directory
+        cleanup_temp_files(file_path)
 
-async def _transcribe_urls(urls):
+async def _transcribe_urls(urls, timestamps, diarization):
     transcriptions = []
     for url in urls:
         file_path, temp_dir = await download_file(url)
@@ -45,7 +45,7 @@ async def _transcribe_urls(urls):
             transcriptions.append({"url": url, "error": "Failed to download the file"})
     return transcriptions
 
-async def _transcribe_youtube(youtube_url):
+async def _transcribe_youtube(youtube_url, timestamps, diarization):
     audio_url = await download_youtube_audio(youtube_url)
     if audio_url:
         file_path, temp_dir = await download_file(audio_url)
@@ -61,7 +61,7 @@ async def _transcribe_youtube(youtube_url):
     else:
         return {"youtube_url": youtube_url, "error": "Failed to get download link for YouTube video"}
 
-async def _transcribe_file(file_path, filename):
+async def _transcribe_file(file_path, filename, timestamps, diarization):
     try:
         transcription = await process_audio(file_path)
         return {"filename": filename, "transcription": transcription}
