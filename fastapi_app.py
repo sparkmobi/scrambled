@@ -337,7 +337,7 @@ async def use_assemblyai_transcription(file_path, timestamps, diarization):
         webhook_auth_header_value=None,
         audio_start_from=None,
         audio_end_at=None,
-        word_timestamps=timestamps
+        # Remove word_timestamps parameter as it's not supported
     )
     transcriber = aai.Transcriber()
     transcript = await asyncio.to_thread(transcriber.transcribe, file_path, config=config)
@@ -355,6 +355,7 @@ def format_assemblyai_response(transcript, timestamps, diarization):
         }
         if timestamps:
             entry["start"] = utterance.start / 1000  # Convert to seconds
+            entry["end"] = utterance.end / 1000  # Convert to seconds
             entry["duration"] = (utterance.end - utterance.start) / 1000  # Convert to seconds
         if diarization:
             entry["speaker"] = utterance.speaker
@@ -373,8 +374,8 @@ async def use_groq_transcription(client, file_path, model, timestamps, diarizati
             prompt="",
             temperature=0.0,
             response_format="verbose_json",
-            timestamp_granularities=["word"] if timestamps else None,
-            diarization=diarization
+            timestamp_granularities=["word"] if timestamps else None
+            # Remove the diarization parameter as it's not supported
         )
     
     return format_groq_response(response, timestamps, diarization)
@@ -388,6 +389,7 @@ def format_groq_response(response, timestamps, diarization):
         }
         if timestamps:
             entry["start"] = segment.start
+            entry["end"] = segment.end
             entry["duration"] = segment.end - segment.start
         if diarization and hasattr(segment, 'speaker'):
             entry["speaker"] = segment.speaker
