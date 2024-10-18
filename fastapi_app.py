@@ -127,7 +127,7 @@ def exponential_backoff(attempt, max_delay=60):
 aai.settings.api_key = ASSEMBLYAI_API_KEY
 transcriber = aai.Transcriber()
 
-async def process_audio(file_path):
+async def process_audio(file_path, timestamps=True, diarization=True):
     temp_dir = create_temp_dir()
     try:
         file_extension = os.path.splitext(file_path)[1].lower()
@@ -153,7 +153,7 @@ async def process_audio(file_path):
         tasks = []
         for i, chunk in enumerate(chunks):
             audio_duration = len(chunk) / 1000
-            task = asyncio.create_task(transcribe_chunk(chunk, i+1, audio_duration, temp_dir, language))
+            task = asyncio.create_task(transcribe_chunk(chunk, i+1, audio_duration, temp_dir, language, timestamps, diarization))
             tasks.append(task)
 
         transcripts = await asyncio.gather(*tasks)
@@ -274,7 +274,7 @@ def signal_handler(sig, frame):
     print("Received shutdown signal. Stopping server...")
     sys.exit(0)
 
-async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, language):
+async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, language, timestamps, diarization):
     temp_file_path = None
     max_retries = 5
     for attempt in range(max_retries):
@@ -289,19 +289,19 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
             
             if api_key == "use_assemblyai":
                 logger.info(f"Using AssemblyAI for chunk {chunk_number}")
-                transcript = await use_assemblyai_transcription(temp_file_path)
+                transcript = await use_assemblyai_transcription(temp_file_path, timestamps, diarization)
             else:
                 try:
                     client = AsyncGroq(api_key=api_key)
                     logger.info(f"Using Groq model: {model} for chunk {chunk_number}")
-                    transcript = await use_groq_transcription(client, temp_file_path, model)
+                    transcript = await use_groq_transcription(client, temp_file_path, model, timestamps, diarization)
                 except Exception as e:
                     logger.error(f"Error with Groq API: {str(e)}")
                     if attempt < max_retries - 1:
                         continue
                     else:
                         logger.info(f"Falling back to AssemblyAI for chunk {chunk_number}")
-                        transcript = await use_assemblyai_transcription(temp_file_path)
+                        transcript = await use_assemblyai_transcription(temp_file_path, timestamps, diarization)
             
             logger.info(f"Transcribed text: {transcript['transcript'][:100]}...")  # Log first 100 characters
             logger.info(f"Chunk {chunk_number} processed successfully")
@@ -322,10 +322,10 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
 
     raise Exception(f"Failed to transcribe chunk {chunk_number} after {max_retries} attempts")
 
-async def use_assemblyai_transcription(file_path):
+async def use_assemblyai_transcription(file_path, timestamps, diarization):
     aai.settings.api_key = ASSEMBLYAI_API_KEY
     config = aai.TranscriptionConfig(
-        speaker_labels=True,
+        speaker_labels=diarization,
         auto_highlights=True,
         word_boost=[],
         boost_param="default",
@@ -337,32 +337,35 @@ async def use_assemblyai_transcription(file_path):
         webhook_auth_header_value=None,
         audio_start_from=None,
         audio_end_at=None,
-        word_timestamps=True
+        word_timestamps=timestamps
     )
     transcriber = aai.Transcriber()
     transcript = await asyncio.to_thread(transcriber.transcribe, file_path, config=config)
     if transcript.status == "error":
         raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
     
-    return format_assemblyai_response(transcript)
+    return format_assemblyai_response(transcript, timestamps, diarization)
 
-def format_assemblyai_response(transcript):
+def format_assemblyai_response(transcript, timestamps, diarization):
     full_transcript = transcript.text
     transcript_json = []
     for utterance in transcript.utterances:
-        transcript_json.append({
-            "start": utterance.start / 1000,  # Convert to seconds
-            "duration": (utterance.end - utterance.start) / 1000,  # Convert to seconds
+        entry = {
             "text": utterance.text,
-            "speaker": utterance.speaker
-        })
+        }
+        if timestamps:
+            entry["start"] = utterance.start / 1000  # Convert to seconds
+            entry["duration"] = (utterance.end - utterance.start) / 1000  # Convert to seconds
+        if diarization:
+            entry["speaker"] = utterance.speaker
+        transcript_json.append(entry)
     
     return {
         "transcript": full_transcript,
         "transcript_json": transcript_json
     }
 
-async def use_groq_transcription(client, file_path, model):
+async def use_groq_transcription(client, file_path, model, timestamps, diarization):
     with open(file_path, "rb") as audio_file:
         response = await client.audio.transcriptions.create(
             file=audio_file,
@@ -370,22 +373,25 @@ async def use_groq_transcription(client, file_path, model):
             prompt="",
             temperature=0.0,
             response_format="verbose_json",
-            timestamp_granularities=["word"],
-            diarization=True
+            timestamp_granularities=["word"] if timestamps else None,
+            diarization=diarization
         )
     
-    return format_groq_response(response)
+    return format_groq_response(response, timestamps, diarization)
 
-def format_groq_response(response):
+def format_groq_response(response, timestamps, diarization):
     full_transcript = response.text
     transcript_json = []
     for segment in response.segments:
-        transcript_json.append({
-            "start": segment.start,
-            "duration": segment.end - segment.start,
+        entry = {
             "text": segment.text,
-            "speaker": segment.speaker if hasattr(segment, 'speaker') else "Unknown"
-        })
+        }
+        if timestamps:
+            entry["start"] = segment.start
+            entry["duration"] = segment.end - segment.start
+        if diarization and hasattr(segment, 'speaker'):
+            entry["speaker"] = segment.speaker
+        transcript_json.append(entry)
     
     return {
         "transcript": full_transcript,
