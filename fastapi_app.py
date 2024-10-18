@@ -298,6 +298,7 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
                 except Exception as e:
                     logger.error(f"Error with Groq API: {str(e)}")
                     if attempt < max_retries - 1:
+                        await asyncio.sleep(exponential_backoff(attempt))
                         continue
                     else:
                         logger.info(f"Falling back to AssemblyAI for chunk {chunk_number}")
@@ -373,9 +374,7 @@ async def use_groq_transcription(client, file_path, model, timestamps, diarizati
             model=model,
             prompt="",
             temperature=0.0,
-            response_format="verbose_json",
-            timestamp_granularities=["word"] if timestamps else None
-            # Remove the diarization parameter as it's not supported
+            response_format="verbose_json"
         )
     
     return format_groq_response(response, timestamps, diarization)
@@ -383,14 +382,16 @@ async def use_groq_transcription(client, file_path, model, timestamps, diarizati
 def format_groq_response(response, timestamps, diarization):
     full_transcript = response.text
     transcript_json = []
+    current_time = 0
     for segment in response.segments:
         entry = {
             "text": segment.text,
         }
         if timestamps:
-            entry["start"] = segment.start
-            entry["end"] = segment.end
-            entry["duration"] = segment.end - segment.start
+            entry["start"] = current_time
+            entry["end"] = current_time + segment.duration
+            entry["duration"] = segment.duration
+            current_time = entry["end"]
         if diarization and hasattr(segment, 'speaker'):
             entry["speaker"] = segment.speaker
         transcript_json.append(entry)
