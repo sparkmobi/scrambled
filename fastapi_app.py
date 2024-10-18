@@ -297,6 +297,8 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
                     transcript = await use_groq_transcription(client, temp_file_path, model, timestamps, diarization)
                 except Exception as e:
                     logger.error(f"Error with Groq API: {str(e)}")
+                    logger.error(f"Error type: {type(e)}")
+                    logger.error(f"Error args: {e.args}")
                     if attempt < max_retries - 1:
                         await asyncio.sleep(exponential_backoff(attempt))
                         continue
@@ -377,23 +379,29 @@ async def use_groq_transcription(client, file_path, model, timestamps, diarizati
             response_format="verbose_json"
         )
     
+    logger.info(f"Groq API response type: {type(response)}")
+    logger.info(f"Groq API response keys: {response.keys() if isinstance(response, dict) else 'Not a dict'}")
+    
     return format_groq_response(response, timestamps, diarization)
 
 def format_groq_response(response, timestamps, diarization):
-    full_transcript = response.text
+    # Assuming the response is a dictionary
+    full_transcript = response.get('text', '')
     transcript_json = []
     current_time = 0
-    for segment in response.segments:
+    
+    segments = response.get('segments', [])
+    for segment in segments:
         entry = {
-            "text": segment.text,
+            "text": segment.get('text', ''),
         }
         if timestamps:
             entry["start"] = current_time
-            entry["end"] = current_time + segment.duration
-            entry["duration"] = segment.duration
+            entry["end"] = current_time + segment.get('duration', 0)
+            entry["duration"] = segment.get('duration', 0)
             current_time = entry["end"]
-        if diarization and hasattr(segment, 'speaker'):
-            entry["speaker"] = segment.speaker
+        if diarization and 'speaker' in segment:
+            entry["speaker"] = segment['speaker']
         transcript_json.append(entry)
     
     return {
