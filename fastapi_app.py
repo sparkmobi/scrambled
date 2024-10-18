@@ -295,8 +295,9 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
                     client = AsyncGroq(api_key=api_key)
                     logger.info(f"Using Groq model: {model} for chunk {chunk_number}")
                     transcript = await use_groq_transcription(client, temp_file_path, model, timestamps, diarization)
+                    logger.info(f"Groq transcription successful for chunk {chunk_number}")
                 except Exception as e:
-                    logger.error(f"Error with Groq API: {str(e)}")
+                    logger.error(f"Error with Groq API for chunk {chunk_number}: {str(e)}")
                     logger.error(f"Error type: {type(e)}")
                     logger.error(f"Error args: {e.args}")
                     if attempt < max_retries - 1:
@@ -306,7 +307,7 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
                         logger.info(f"Falling back to AssemblyAI for chunk {chunk_number}")
                         transcript = await use_assemblyai_transcription(temp_file_path, timestamps, diarization)
             
-            logger.info(f"Transcribed text: {transcript['transcript'][:100]}...")  # Log first 100 characters
+            logger.info(f"Transcribed text for chunk {chunk_number}: {transcript['transcript'][:100]}...")  # Log first 100 characters
             logger.info(f"Chunk {chunk_number} processed successfully")
             return transcript
         except Exception as e:
@@ -385,7 +386,6 @@ async def use_groq_transcription(client, file_path, model, timestamps, diarizati
     return format_groq_response(response, timestamps, diarization)
 
 def format_groq_response(response, timestamps, diarization):
-    # Assuming the response is a dictionary
     full_transcript = response.get('text', '')
     transcript_json = []
     current_time = 0
@@ -401,7 +401,7 @@ def format_groq_response(response, timestamps, diarization):
             entry["duration"] = segment.get('duration', 0)
             current_time = entry["end"]
         if diarization and 'speaker' in segment:
-            entry["speaker"] = segment['speaker']
+            entry["speaker"] = segment.get('speaker', 'Unknown')
         transcript_json.append(entry)
     
     return {
