@@ -382,6 +382,7 @@ async def use_groq_transcription(client, file_path, model, timestamps, diarizati
     
     logger.info(f"Groq API response type: {type(response)}")
     logger.info(f"Groq API response keys: {response.keys() if isinstance(response, dict) else 'Not a dict'}")
+    logger.info(f"Groq API response content: {response}")
     
     return format_groq_response(response, timestamps, diarization)
 
