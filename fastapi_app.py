@@ -381,28 +381,25 @@ async def use_groq_transcription(client, file_path, model, timestamps, diarizati
         )
     
     logger.info(f"Groq API response type: {type(response)}")
-    logger.info(f"Groq API response keys: {response.keys() if isinstance(response, dict) else 'Not a dict'}")
     logger.info(f"Groq API response content: {response}")
     
     return format_groq_response(response, timestamps, diarization)
 
 def format_groq_response(response, timestamps, diarization):
-    full_transcript = response.get('text', '')
+    full_transcript = response.text
     transcript_json = []
     current_time = 0
     
-    segments = response.get('segments', [])
-    for segment in segments:
+    for segment in response.segments:
         entry = {
-            "text": segment.get('text', ''),
+            "text": segment.text,
         }
         if timestamps:
-            entry["start"] = current_time
-            entry["end"] = current_time + segment.get('duration', 0)
-            entry["duration"] = segment.get('duration', 0)
-            current_time = entry["end"]
-        if diarization and 'speaker' in segment:
-            entry["speaker"] = segment.get('speaker', 'Unknown')
+            entry["start"] = segment.start
+            entry["end"] = segment.end
+            entry["duration"] = segment.end - segment.start
+        if diarization and hasattr(segment, 'speaker'):
+            entry["speaker"] = getattr(segment, 'speaker', 'Unknown')
         transcript_json.append(entry)
     
     return {
