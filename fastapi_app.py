@@ -3,8 +3,8 @@ import sys
 import logging
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from typing import List
+from pydantic import BaseModel, Field
+from typing import List, Optional
 import requests
 from pydub import AudioSegment
 from dotenv import load_dotenv
@@ -58,7 +58,9 @@ celery_app.conf.broker_connection_retry_on_startup = True
 
 class TranscriptionRequest(BaseModel):
     urls: List[str] = []
-    youtube_url: str = None
+    youtube_url: Optional[str] = None
+    timestamps: bool = Field(default=True, description="Include timestamps in the transcription")
+    diarization: bool = Field(default=True, description="Enable speaker diarization")
 
 def create_temp_dir():
     return tempfile.mkdtemp(dir=SCRIPT_DIR)
@@ -161,11 +163,16 @@ async def process_audio(file_path):
             error_msgs = "\n".join(errors)
             raise Exception(f"Errors occurred during transcription:\n{error_msgs}")
 
-        full_transcript = " ".join(t for t in transcripts if not (isinstance(t, str) and t.startswith("Error in chunk")))
+        full_transcript = " ".join(t["transcript"] for t in transcripts if not (isinstance(t, str) and t.startswith("Error in chunk")))
+        full_transcript_json = [item for t in transcripts for item in t["transcript_json"]]
+
         logger.info("All chunks processed and combined")
         logger.info(f"Full transcript (first 100 characters): {full_transcript[:100]}...")
 
-        return full_transcript
+        return {
+            "transcript": full_transcript,
+            "transcript_json": full_transcript_json
+        }
 
     except Exception as e:
         logger.error(f"Error in process_audio: {str(e)}")
@@ -282,23 +289,23 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
             
             if api_key == "use_assemblyai":
                 logger.info(f"Using AssemblyAI for chunk {chunk_number}")
-                transcript_text = await use_assemblyai_transcription(temp_file_path)
+                transcript = await use_assemblyai_transcription(temp_file_path)
             else:
                 try:
                     client = AsyncGroq(api_key=api_key)
                     logger.info(f"Using Groq model: {model} for chunk {chunk_number}")
-                    transcript_text = await use_groq_transcription(client, temp_file_path, model)
+                    transcript = await use_groq_transcription(client, temp_file_path, model)
                 except Exception as e:
                     logger.error(f"Error with Groq API: {str(e)}")
                     if attempt < max_retries - 1:
                         continue
                     else:
                         logger.info(f"Falling back to AssemblyAI for chunk {chunk_number}")
-                        transcript_text = await use_assemblyai_transcription(temp_file_path)
+                        transcript = await use_assemblyai_transcription(temp_file_path)
             
-            logger.info(f"Transcribed text: {transcript_text[:100]}...")  # Log first 100 characters
+            logger.info(f"Transcribed text: {transcript['transcript'][:100]}...")  # Log first 100 characters
             logger.info(f"Chunk {chunk_number} processed successfully")
-            return transcript_text
+            return transcript
         except Exception as e:
             logger.error(f"Error in transcribe_chunk {chunk_number} (Attempt {attempt + 1}/{max_retries}): {str(e)}")
             if attempt < max_retries - 1:
@@ -317,13 +324,43 @@ async def transcribe_chunk(chunk, chunk_number, audio_duration, temp_dir, langua
 
 async def use_assemblyai_transcription(file_path):
     aai.settings.api_key = ASSEMBLYAI_API_KEY
-    # Remove language detection from AssemblyAI config
-    config = aai.TranscriptionConfig()
+    config = aai.TranscriptionConfig(
+        speaker_labels=True,
+        auto_highlights=True,
+        word_boost=[],
+        boost_param="default",
+        punctuate=True,
+        format_text=True,
+        dual_channel=False,
+        webhook_url=None,
+        webhook_auth_header_name=None,
+        webhook_auth_header_value=None,
+        audio_start_from=None,
+        audio_end_at=None,
+        word_timestamps=True
+    )
     transcriber = aai.Transcriber()
     transcript = await asyncio.to_thread(transcriber.transcribe, file_path, config=config)
     if transcript.status == "error":
         raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
-    return transcript.text
+    
+    return format_assemblyai_response(transcript)
+
+def format_assemblyai_response(transcript):
+    full_transcript = transcript.text
+    transcript_json = []
+    for utterance in transcript.utterances:
+        transcript_json.append({
+            "start": utterance.start / 1000,  # Convert to seconds
+            "duration": (utterance.end - utterance.start) / 1000,  # Convert to seconds
+            "text": utterance.text,
+            "speaker": utterance.speaker
+        })
+    
+    return {
+        "transcript": full_transcript,
+        "transcript_json": transcript_json
+    }
 
 async def use_groq_transcription(client, file_path, model):
     with open(file_path, "rb") as audio_file:
@@ -332,17 +369,28 @@ async def use_groq_transcription(client, file_path, model):
             model=model,
             prompt="",
             temperature=0.0,
-            response_format="text"
+            response_format="verbose_json",
+            timestamp_granularities=["word"],
+            diarization=True
         )
     
-    if isinstance(response, str):
-        return response.strip()
-    elif isinstance(response, dict) and 'text' in response:
-        return response['text'].strip()
-    elif hasattr(response, 'text'):
-        return response.text.strip()
-    else:
-        return str(response).strip()
+    return format_groq_response(response)
+
+def format_groq_response(response):
+    full_transcript = response.text
+    transcript_json = []
+    for segment in response.segments:
+        transcript_json.append({
+            "start": segment.start,
+            "duration": segment.end - segment.start,
+            "text": segment.text,
+            "speaker": segment.speaker if hasattr(segment, 'speaker') else "Unknown"
+        })
+    
+    return {
+        "transcript": full_transcript,
+        "transcript_json": transcript_json
+    }
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
